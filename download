@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS-generated files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Planning, Design, and Documentation files
+*_plan.md
+implementation_plan.md
+implementation_plan.pdf
+implementation_plan_*.md
+walkthrough.md
+*.jpg
+*.png
+*.pdf
+*.html
+!**/index.html
+
