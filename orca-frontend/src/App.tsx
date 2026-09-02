@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Send, Ship, Anchor, Layers, X, Activity, ShieldAlert, Download, Upload, MapPin, Trash2, Info, ExternalLink, Plus, MoreVertical, Search, Navigation, Wind } from 'lucide-react';
+import { Send, Ship, Anchor, Layers, X, Activity, ShieldAlert, Download, Upload, MapPin, Trash2, Info, ExternalLink, Plus, MoreVertical, Search, Navigation, Wind, Fish, ArrowLeft, Loader2, GitCompare, Thermometer, Droplets, TrendingUp, TrendingDown, Minus, AlertTriangle } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -35,12 +35,181 @@ interface Message {
   isLoaded?: boolean;
 }
 
+interface ProductivityAnnualRow {
+  Year: number;
+  catch: number;
+  sst?: number;
+  chlorophyll?: number;
+  sst_anomaly?: number;
+  chlorophyll_anomaly?: number;
+  catch_z?: number;
+  catch_anomaly?: boolean;
+  catch_growth_pct?: number;
+}
+
+interface ProductivitySeasonalRow {
+  Season: string;
+  mean_catch: number;
+  mean_sst: number;
+  mean_chlorophyll: number;
+  months: number;
+}
+
+interface ProductivityTopSpecies {
+  Species: string;
+  catch_tonnes: number;
+}
+
+interface ProductivityAnalysis {
+  state: string;
+  species_filter: string | null;
+  environment_is_synthetic: boolean;
+  annual: ProductivityAnnualRow[];
+  seasonal: ProductivitySeasonalRow[];
+  top_species: ProductivityTopSpecies[];
+  species: string[];
+  correlation: { catch_vs_sst: number | null; catch_vs_chlorophyll: number | null };
+  anomaly_rule: string;
+  anomalies: { Year: number; catch: number; catch_z: number }[];
+  explanation: { direction: string; text: string; caution: string; peak_season: string | null };
+}
+
 const MOCK_VESSELS: Vessel[] = [
   { id: 'V1', name: 'ORCA-1', type: 'Patrol', speed: '24 knots', status: 'Active Monitoring', lat: 15.4, lng: 73.8 },
   { id: 'V2', name: 'MV Sagar', type: 'Cargo', speed: '12 knots', status: 'In Transit', lat: 18.9, lng: 72.8 },
   { id: 'V3', name: 'INS Vikram', type: 'Navy', speed: '30 knots', status: 'Patrol', lat: 9.9, lng: 76.2 },
   { id: 'V4', name: 'Oceanic 5', type: 'Fishing', speed: '8 knots', status: 'Stationary', lat: 13.0, lng: 80.3 },
 ];
+
+// ==========================================
+// Lightweight inline SVG charts (no external chart library required)
+// ==========================================
+function MultiLineChart({
+  data, lines, xKey, width = 560, height = 220
+}: {
+  data: any[];
+  lines: { key: string; color: string; label: string }[];
+  xKey: string;
+  width?: number;
+  height?: number;
+}) {
+  if (!data || data.length === 0) return <p className="text-xs text-slate-500 text-center py-8">No data available.</p>;
+
+  const padding = { top: 16, right: 16, bottom: 28, left: 40 };
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+
+  const allVals = lines.flatMap(l => data.map(d => Number(d[l.key]) || 0));
+  const minV = Math.min(0, ...allVals);
+  const maxV = Math.max(1, ...allVals);
+
+  const xFor = (i: number) => padding.left + (data.length === 1 ? innerW / 2 : (i / (data.length - 1)) * innerW);
+  const yFor = (v: number) => padding.top + innerH - ((v - minV) / (maxV - minV || 1)) * innerH;
+
+  return (
+    <div className="overflow-x-auto">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto min-w-[420px]">
+        {/* gridlines */}
+        {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
+          <line key={i} x1={padding.left} x2={width - padding.right}
+            y1={padding.top + innerH * f} y2={padding.top + innerH * f}
+            stroke="#1e293b" strokeWidth="1" />
+        ))}
+        {/* x labels */}
+        {data.map((d, i) => (
+          (i === 0 || i === data.length - 1 || data.length <= 8) && (
+            <text key={i} x={xFor(i)} y={height - 6} fontSize="9" textAnchor="middle" fill="#64748b">
+              {d[xKey]}
+            </text>
+          )
+        ))}
+        {/* lines */}
+        {lines.map(line => {
+          const points = data.map((d, i) => `${xFor(i)},${yFor(Number(d[line.key]) || 0)}`).join(' ');
+          return (
+            <g key={line.key}>
+              <polyline points={points} fill="none" stroke={line.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+              {data.map((d, i) => (
+                <circle key={i} cx={xFor(i)} cy={yFor(Number(d[line.key]) || 0)} r="2.5" fill={line.color} />
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex flex-wrap gap-3 mt-2 px-2">
+        {lines.map(line => (
+          <div key={line.key} className="flex items-center gap-1.5 text-[11px] text-slate-400">
+            <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: line.color }}></span>
+            {line.label}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BarChart({
+  data, valueKey, labelKey, color = '#10b981', width = 560, height = 200
+}: {
+  data: any[];
+  valueKey: string;
+  labelKey: string;
+  color?: string;
+  width?: number;
+  height?: number;
+}) {
+  if (!data || data.length === 0) return <p className="text-xs text-slate-500 text-center py-8">No data available.</p>;
+
+  const padding = { top: 16, right: 16, bottom: 36, left: 40 };
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+  const maxV = Math.max(1, ...data.map(d => Number(d[valueKey]) || 0));
+  const barW = innerW / data.length;
+
+  return (
+    <div className="overflow-x-auto">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto min-w-[420px]">
+        {[0, 0.5, 1].map((f, i) => (
+          <line key={i} x1={padding.left} x2={width - padding.right}
+            y1={padding.top + innerH * f} y2={padding.top + innerH * f}
+            stroke="#1e293b" strokeWidth="1" />
+        ))}
+        {data.map((d, i) => {
+          const v = Number(d[valueKey]) || 0;
+          const h = (v / maxV) * innerH;
+          const x = padding.left + i * barW + barW * 0.15;
+          const y = padding.top + innerH - h;
+          return (
+            <g key={i}>
+              <rect x={x} y={y} width={barW * 0.7} height={h} fill={color} rx="2" opacity="0.85" />
+              <text x={x + barW * 0.35} y={height - 20} fontSize="8.5" textAnchor="middle" fill="#94a3b8"
+                transform={`rotate(-30 ${x + barW * 0.35} ${height - 20})`}>
+                {String(d[labelKey]).length > 12 ? String(d[labelKey]).slice(0, 12) + '…' : d[labelKey]}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function CorrelationBadge({ label, value, icon }: { label: string; value: number | null; icon: any }) {
+  const strength = value === null ? 'No data' : Math.abs(value) >= 0.5 ? 'Strong' : Math.abs(value) >= 0.2 ? 'Moderate' : 'Weak';
+  const color = value === null ? 'text-slate-500 border-slate-700 bg-slate-800/40'
+    : value > 0 ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+    : 'text-red-400 border-red-500/30 bg-red-500/10';
+  return (
+    <div className={`rounded-xl border p-3 flex items-center gap-3 ${color}`}>
+      {icon}
+      <div>
+        <p className="text-[11px] opacity-70">{label}</p>
+        <p className="text-lg font-bold leading-none mt-0.5">{value === null ? '—' : value.toFixed(2)}</p>
+        <p className="text-[10px] opacity-60 mt-0.5">{strength} correlation</p>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const mapRef = useRef<any>(null);
@@ -83,6 +252,22 @@ export default function App() {
   
   const [routes, setRoutes] = useState<any[]>([]);
   const routesLayerRef = useRef<any>(null);
+
+  // Marine Productivity — standalone full-screen view, independent of the map
+  const [showProductivityView, setShowProductivityView] = useState(false);
+  const [productivityRegions, setProductivityRegions] = useState<string[]>([]);
+  const [productivityRegionsLoading, setProductivityRegionsLoading] = useState(false);
+  const [productivityRegionsError, setProductivityRegionsError] = useState<string | null>(null);
+
+  const [compareMode, setCompareMode] = useState(false);
+  const [regionA, setRegionA] = useState('');
+  const [regionB, setRegionB] = useState('');
+  const [speciesFilter, setSpeciesFilter] = useState('');
+
+  const [analysis, setAnalysis] = useState<ProductivityAnalysis | null>(null);
+  const [comparison, setComparison] = useState<any | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   useEffect(() => {
     const initMap = () => {
@@ -609,6 +794,62 @@ export default function App() {
     setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
   };
 
+  // ==========================================
+  // Marine Productivity — API calls
+  // ==========================================
+  const fetchProductivityRegions = async () => {
+    setProductivityRegionsLoading(true);
+    setProductivityRegionsError(null);
+    try {
+      const res = await fetch("http://localhost:8000/api/marine-productivity/regions");
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+      const data = await res.json();
+      const regions: string[] = data.regions || [];
+      setProductivityRegions(regions);
+      if (regions.length > 0 && !regionA) setRegionA(regions[0]);
+      if (regions.length > 1 && !regionB) setRegionB(regions[1]);
+    } catch (err) {
+      console.error(err);
+      setProductivityRegionsError("Could not reach backend. Ensure it is running at http://localhost:8000.");
+    } finally {
+      setProductivityRegionsLoading(false);
+    }
+  };
+
+  const openProductivityView = () => {
+    setShowProductivityView(true);
+    if (productivityRegions.length === 0) fetchProductivityRegions();
+  };
+
+  const runProductivityAnalysis = async () => {
+    if (!regionA) return;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    setAnalysis(null);
+    setComparison(null);
+    try {
+      if (compareMode) {
+        if (!regionB) { setAnalysisError("Select a second region to compare."); setAnalysisLoading(false); return; }
+        const params = new URLSearchParams({ region_a: regionA, region_b: regionB });
+        if (speciesFilter) params.set('species', speciesFilter);
+        const res = await fetch(`http://localhost:8000/api/marine-productivity/compare?${params.toString()}`);
+        if (!res.ok) throw new Error(`Server responded ${res.status}`);
+        setComparison(await res.json());
+      } else {
+        const params = new URLSearchParams({ state: regionA });
+        if (speciesFilter) params.set('species', speciesFilter);
+        const res = await fetch(`http://localhost:8000/api/marine-productivity/analysis?${params.toString()}`);
+        if (!res.ok) throw new Error(`Server responded ${res.status}`);
+        setAnalysis(await res.json());
+      }
+    } catch (err) {
+      console.error(err);
+      setAnalysisError("Failed to fetch analysis. Ensure the backend is running and the region has data.");
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
   // Add Custom Marker with Dynamic A* Pathfinding
   const handleAddCustomMarker = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -864,6 +1105,13 @@ export default function App() {
             >
               <Layers className="w-5 h-5" />
             </button>
+            <button 
+              onClick={openProductivityView}
+              className="bg-slate-900/90 backdrop-blur-md border border-slate-700/50 p-3 rounded-full shadow-lg text-slate-200 hover:text-white hover:bg-emerald-600 hover:border-emerald-500 transition-colors"
+              title="Marine Productivity"
+            >
+              <Fish className="w-5 h-5" />
+            </button>
           </div>
           
           {showLayerControl && (
@@ -1060,6 +1308,231 @@ export default function App() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================
+          Marine Productivity — standalone full-screen view.
+          Slides over the entire app; completely separate from the map.
+      ============================================================ */}
+      {showProductivityView && (
+        <div className="fixed inset-0 z-[1500] bg-slate-950 flex flex-col animate-in slide-in-from-right duration-300 overflow-y-auto">
+          {/* Header */}
+          <div className="sticky top-0 z-10 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 px-4 sm:px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowProductivityView(false)}
+                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors"
+                title="Back to Dashboard"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div className="w-10 h-10 rounded-lg bg-emerald-600/20 flex items-center justify-center border border-emerald-500/30">
+                <Fish className="text-emerald-400 w-6 h-6" />
+              </div>
+              <div>
+                <h1 className="text-slate-100 font-bold text-lg leading-tight">Marine Productivity</h1>
+                <p className="text-emerald-400/70 text-xs font-medium tracking-wider uppercase">Landings vs. SST &amp; Chlorophyll Analytics</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setCompareMode(!compareMode)}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                compareMode
+                  ? 'bg-emerald-600 border-emerald-500 text-white'
+                  : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              <GitCompare className="w-4 h-4" /> Compare Regions
+            </button>
+          </div>
+
+          {/* Controls */}
+          <div className="px-4 sm:px-6 py-4 border-b border-slate-800 bg-slate-900/50">
+            {productivityRegionsLoading && (
+              <p className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading coastal regions...</p>
+            )}
+            {productivityRegionsError && (
+              <div className="flex items-center gap-2 text-xs text-red-400">
+                <AlertTriangle className="w-3.5 h-3.5" /> {productivityRegionsError}
+                <button onClick={fetchProductivityRegions} className="underline hover:text-red-300">Retry</button>
+              </div>
+            )}
+            {!productivityRegionsLoading && !productivityRegionsError && productivityRegions.length > 0 && (
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-wider text-slate-500">{compareMode ? 'Region A' : 'Coastal Region'}</label>
+                  <select
+                    value={regionA}
+                    onChange={e => setRegionA(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white min-w-[180px] focus:outline-none focus:border-emerald-500"
+                  >
+                    {productivityRegions.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+
+                {compareMode && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase tracking-wider text-slate-500">Region B</label>
+                    <select
+                      value={regionB}
+                      onChange={e => setRegionB(e.target.value)}
+                      className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white min-w-[180px] focus:outline-none focus:border-emerald-500"
+                    >
+                      {productivityRegions.map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-wider text-slate-500">Species (optional)</label>
+                  <input
+                    type="text"
+                    value={speciesFilter}
+                    onChange={e => setSpeciesFilter(e.target.value)}
+                    placeholder="e.g. Sardines"
+                    className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white w-40 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <button
+                  onClick={runProductivityAnalysis}
+                  disabled={analysisLoading || !regionA}
+                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+                >
+                  {analysisLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
+                  Run Analysis
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 p-4 sm:p-6 space-y-6 max-w-5xl w-full mx-auto">
+            {analysisError && (
+              <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+                <AlertTriangle className="w-4 h-4 shrink-0" /> {analysisError}
+              </div>
+            )}
+
+            {!analysis && !comparison && !analysisLoading && !analysisError && (
+              <div className="flex flex-col items-center justify-center text-center gap-3 py-24 text-slate-500">
+                <Fish className="w-10 h-10 opacity-50" />
+                <p className="text-sm">Select a region {compareMode ? 'pair' : ''} and run analysis to see landings, SST &amp; chlorophyll trends.</p>
+              </div>
+            )}
+
+            {/* Single-region analysis */}
+            {analysis && !compareMode && (
+              <>
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+                  <div className="flex items-start justify-between flex-wrap gap-2 mb-3">
+                    <div>
+                      <h2 className="text-slate-100 font-bold text-base">{analysis.state}</h2>
+                      {analysis.species_filter && <p className="text-xs text-slate-500">Species: {analysis.species_filter}</p>}
+                    </div>
+                    <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${
+                      analysis.explanation.direction === 'increasing' ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' :
+                      analysis.explanation.direction === 'decreasing' ? 'text-red-400 border-red-500/30 bg-red-500/10' :
+                      'text-slate-400 border-slate-700 bg-slate-800/50'
+                    }`}>
+                      {analysis.explanation.direction === 'increasing' ? <TrendingUp className="w-3.5 h-3.5" /> :
+                       analysis.explanation.direction === 'decreasing' ? <TrendingDown className="w-3.5 h-3.5" /> :
+                       <Minus className="w-3.5 h-3.5" />}
+                      {analysis.explanation.direction}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-300 leading-relaxed">{analysis.explanation.text}</p>
+                  <p className="text-xs text-amber-400/80 mt-3 flex items-start gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {analysis.explanation.caution}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <CorrelationBadge label="Catch vs. SST" value={analysis.correlation.catch_vs_sst} icon={<Thermometer className="w-6 h-6" />} />
+                  <CorrelationBadge label="Catch vs. Chlorophyll" value={analysis.correlation.catch_vs_chlorophyll} icon={<Droplets className="w-6 h-6" />} />
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+                  <h3 className="text-sm font-bold text-slate-300 mb-4">Annual Catch (tonnes)</h3>
+                  <MultiLineChart
+                    data={analysis.annual}
+                    xKey="Year"
+                    lines={[{ key: 'catch', color: '#10b981', label: 'Catch (tonnes)' }]}
+                  />
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+                  <h3 className="text-sm font-bold text-slate-300 mb-4">SST &amp; Chlorophyll Trends</h3>
+                  <MultiLineChart
+                    data={analysis.annual}
+                    xKey="Year"
+                    lines={[
+                      { key: 'sst', color: '#f97316', label: 'SST (°C)' },
+                      { key: 'chlorophyll', color: '#06b6d4', label: 'Chlorophyll (mg/m³)' },
+                    ]}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+                    <h3 className="text-sm font-bold text-slate-300 mb-4">Seasonal Mean Catch</h3>
+                    <BarChart data={analysis.seasonal} valueKey="mean_catch" labelKey="Season" color="#10b981" />
+                  </div>
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+                    <h3 className="text-sm font-bold text-slate-300 mb-4">Top Species by Catch</h3>
+                    <BarChart data={analysis.top_species} valueKey="catch_tonnes" labelKey="Species" color="#0ea5e9" />
+                  </div>
+                </div>
+
+                {analysis.anomalies.length > 0 && (
+                  <div className="bg-slate-900 border border-amber-500/20 rounded-2xl p-5">
+                    <h3 className="text-sm font-bold text-amber-400 mb-3 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" /> Catch Anomalies ({analysis.anomaly_rule})
+                    </h3>
+                    <ul className="space-y-1.5">
+                      {analysis.anomalies.map((a, i) => (
+                        <li key={i} className="flex justify-between text-xs text-slate-300 bg-slate-800/50 rounded-lg px-3 py-2">
+                          <span>Year {a.Year}</span>
+                          <span className="font-mono">{a.catch.toFixed(1)} t (z={a.catch_z.toFixed(2)})</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Comparison view */}
+            {comparison && compareMode && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[comparison.region_a, comparison.region_b].map((r: any, idx: number) => (
+                  <div key={idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+                    <h2 className="text-slate-100 font-bold text-base flex items-center gap-2">
+                      <span className={`w-2.5 h-2.5 rounded-full ${idx === 0 ? 'bg-emerald-500' : 'bg-cyan-500'}`}></span>
+                      {r.state}
+                    </h2>
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="bg-slate-800/50 rounded-lg p-2.5">
+                        <p className="text-[10px] text-slate-500">Mean Catch</p>
+                        <p className="text-sm font-bold text-slate-100 mt-0.5">{r.mean_catch.toFixed(0)} t</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-2.5">
+                        <p className="text-[10px] text-slate-500">Mean SST</p>
+                        <p className="text-sm font-bold text-slate-100 mt-0.5">{r.mean_sst.toFixed(1)}°C</p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-2.5">
+                        <p className="text-[10px] text-slate-500">Mean Chl.</p>
+                        <p className="text-sm font-bold text-slate-100 mt-0.5">{r.mean_chlorophyll.toFixed(2)}</p>
+                      </div>
+                    </div>
+                    <CorrelationBadge label="Catch vs. SST" value={r.correlation.catch_vs_sst} icon={<Thermometer className="w-5 h-5" />} />
+                    <CorrelationBadge label="Catch vs. Chlorophyll" value={r.correlation.catch_vs_chlorophyll} icon={<Droplets className="w-5 h-5" />} />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
