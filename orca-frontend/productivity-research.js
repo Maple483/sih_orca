@@ -27,14 +27,20 @@
         <div style="margin-top:10px;padding:10px;border-radius:9px;background:#451a03;border:1px solid #92400e;color:#fbbf24;font-size:11px;line-height:1.5">⚠️ ${esc(ex.caution || 'Correlation does not prove causation.')}</div>`;
     } catch (_) {}
   }
+
   function attach(root) {
     if (root.dataset.researchAttached) return;
     root.dataset.researchAttached = '1';
-    const content = root.querySelector('#pe-content'); if (!content) return;
-    const observer = new MutationObserver(() => { clearTimeout(root.__orcaResearchTimer); root.__orcaResearchTimer = setTimeout(() => refresh(root), 200); });
-    observer.observe(content, { childList: true, subtree: true });
-    refresh(root);
+    const refreshNow = () => { clearTimeout(root.__orcaResearchTimer); root.__orcaResearchTimer = setTimeout(() => refresh(root), 100); };
+    root.querySelector('#pe-region')?.addEventListener('change', refreshNow);
+    root.querySelector('#pe-species')?.addEventListener('change', refreshNow);
+    root.querySelector('#pe-run')?.addEventListener('click', refreshNow);
+    refreshNow();
   }
-  const watch = new MutationObserver(() => { const root = document.getElementById('orca-productivity-enhanced'); if (root) attach(root); });
+
+  const watch = new MutationObserver(() => {
+    const root = document.getElementById('orca-productivity-enhanced');
+    if (root) attach(root);
+  });
   watch.observe(document.body, { childList: true });
 })();
