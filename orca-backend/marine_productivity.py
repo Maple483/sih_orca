@@ -35,6 +35,15 @@ def _corr(a,b):
     z=pd.concat([a,b],axis=1).dropna(); return None if len(z)<3 or z.iloc[:,0].nunique()<2 or z.iloc[:,1].nunique()<2 else float(z.iloc[:,0].corr(z.iloc[:,1]))
 def _anomaly(df,col):
     s=df[col].astype(float); sd=s.std(ddof=0); df=df.copy(); df["z_score"]=0 if sd==0 else (s-s.mean())/sd; df["anomaly"]=df["z_score"].abs()>=2; return df
+def _records(df):
+    """Convert a DataFrame to JSON-safe records, casting any lingering
+    numpy scalar types (int64, float64, bool_) to native Python types.
+    Without this, FastAPI's default JSON encoder raises a 500 error on
+    columns like int64 counts, even though the DataFrame itself is fine."""
+    return [
+        {k: (v.item() if hasattr(v, "item") else v) for k, v in row.items()}
+        for row in df.to_dict("records")
+    ]
 
 def build_analysis(state:str,species:Optional[str]=None,start_year:int=2007,end_year:int=2012):
     land,env,states=_load(); state=_clean(state)
@@ -43,10 +52,10 @@ def build_analysis(state:str,species:Optional[str]=None,start_year:int=2007,end_
     if species: x=x[x["Species"].str.lower()==species.strip().lower()]
     annual=x.groupby("Year",as_index=False)["catch_tonnes"].sum().rename(columns={"catch_tonnes":"catch"}); aa=_anomaly(annual,"catch")
     e=env[(env["State"]==state)&env["Year"].between(start_year,end_year)].copy(); e["catch"]=e["Year"].map(dict(zip(annual["Year"],annual["catch"])))
-    ea=e.groupby("Year",as_index=False).agg(sst=("SST_C","mean"),chlorophyll=("Chlorophyll_mg_m3","mean"),sst_anomaly=("SST_anomaly_C","mean"),chlorophyll_anomaly=("Chlorophyll_anomaly_mg_m3","mean")); m=annual.merge(ea,on="Year",how="left"); m["catch_z"]=aa["z_score"].values; m["catch_anomaly"]=aa["anomaly"].values; m["catch_growth_pct"]=m["catch"].pct_change()*100
+    ea=e.groupby("Year",as_index=False).agg(sst=("SST_C","mean"),chlorophyll=("Chlorophyll_mg_m3","mean"),sst_anomaly=("SST_anomaly_C","mean"),chlorophyll_anomaly=("Chlorophyll_anomaly_mg_m3","mean")); m=annual.merge(ea,on="Year",how="left"); m["catch_z"]=aa["z_score"].values; m["catch_anomaly"]=aa["anomaly"].values; m["catch_growth_pct"]=(m["catch"].pct_change()*100).replace([np.inf,-np.inf],None)
     seasonal=e.groupby("Season",as_index=False).agg(mean_catch=("catch","mean"),mean_sst=("SST_C","mean"),mean_chlorophyll=("Chlorophyll_mg_m3","mean"),months=("Month","count"))
     sy=x.groupby(["Year","Species"],as_index=False)["catch_tonnes"].sum(); top=sy.groupby("Species",as_index=False)["catch_tonnes"].sum().sort_values("catch_tonnes",ascending=False).head(8)
-    return {"state":state,"species_filter":species,"environment_is_synthetic":True,"annual":m.fillna(0).round(4).to_dict("records"),"seasonal":seasonal.fillna(0).round(4).to_dict("records"),"top_species":top.round(2).to_dict("records"),"species":sorted(sy["Species"].unique().tolist()),"correlation":{"catch_vs_sst":_corr(m["catch"],m["sst"]),"catch_vs_chlorophyll":_corr(m["catch"],m["chlorophyll"])},"anomaly_rule":"|z-score| >= 2","anomalies":m.loc[m["catch_anomaly"],["Year","catch","catch_z"]].to_dict("records"),"explanation":_explain(m,seasonal,species)}
+    return {"state":state,"species_filter":species,"environment_is_synthetic":True,"annual":_records(m.fillna(0).round(4)),"seasonal":_records(seasonal.fillna(0).round(4)),"top_species":_records(top.round(2)),"species":sorted(sy["Species"].unique().tolist()),"correlation":{"catch_vs_sst":_corr(m["catch"],m["sst"]),"catch_vs_chlorophyll":_corr(m["catch"],m["chlorophyll"])},"anomaly_rule":"|z-score| >= 2","anomalies":_records(m.loc[m["catch_anomaly"],["Year","catch","catch_z"]]),"explanation":_explain(m,seasonal,species)}
 
 def _explain(m,s,species):
     delta=float(m.iloc[-1].catch-m.iloc[0].catch) if len(m)>1 else 0; direction="increasing" if delta>0 else "decreasing" if delta<0 else "stable"; cr=_corr(m["catch"],m["chlorophyll"]); sr=_corr(m["catch"],m["sst"]); peak=s.loc[s["mean_catch"].idxmax(),"Season"] if not s.empty else None
