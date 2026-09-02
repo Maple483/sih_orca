@@ -1,0 +1,238 @@
+name: Patch Marine Productivity UI
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-productivity-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply productivity improvements
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app_path = Path('orca-frontend/src/App.tsx')
+          text = app_path.read_text(encoding='utf-8')
+
+          old_start = text.index('function MultiLineChart({')
+          old_end = text.index('\nfunction BarChart({', old_start)
+          new_chart = r'''function MultiLineChart({
+            data, lines, xKey, width = 560, height = 260
+          }: {
+            data: any[];
+            lines: { key: string; color: string; label: string }[];
+            xKey: string;
+            width?: number;
+            height?: number;
+          }) {
+            if (!data || data.length === 0) return <p className="text-xs text-slate-500 text-center py-8">No data available.</p>;
+
+            const padding = { top: 18, right: 20, bottom: 30, left: 64 };
+            const innerW = width - padding.left - padding.right;
+            const innerH = height - padding.top - padding.bottom;
+            const allVals = lines.flatMap(l => data.map(d => Number(d[l.key]) || 0));
+            const minV = Math.min(0, ...allVals);
+            const maxV = Math.max(1, ...allVals);
+            const range = maxV - minV || 1;
+            const xFor = (i: number) => padding.left + (data.length === 1 ? innerW / 2 : (i / (data.length - 1)) * innerW);
+            const yFor = (v: number) => padding.top + innerH - ((v - minV) / range) * innerH;
+            const formatValue = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+            return (
+              <div className="overflow-x-auto">
+                <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto min-w-[420px]">
+                  {[0, 0.25, 0.5, 0.75, 1].map((f, i) => {
+                    const tickValue = maxV - range * f;
+                    return (
+                      <g key={i}>
+                        <line x1={padding.left} x2={width - padding.right}
+                          y1={padding.top + innerH * f} y2={padding.top + innerH * f}
+                          stroke="#1e293b" strokeWidth="1" />
+                        <text x={padding.left - 8} y={padding.top + innerH * f + 3}
+                          fontSize="9" textAnchor="end" fill="#94a3b8">
+                          {formatValue(tickValue)}
+                        </text>
+                      </g>
+                    );
+                  })}
+
+                  {data.map((d, i) => (
+                    (i === 0 || i === data.length - 1 || data.length <= 8) && (
+                      <text key={i} x={xFor(i)} y={height - 7} fontSize="9" textAnchor="middle" fill="#64748b">
+                        {d[xKey]}
+                      </text>
+                    )
+                  ))}
+
+                  {lines.map(line => {
+                    const points = data.map((d, i) => `${xFor(i)},${yFor(Number(d[line.key]) || 0)}`).join(' ');
+                    return (
+                      <g key={line.key}>
+                        <polyline points={points} fill="none" stroke={line.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+                        {data.map((d, i) => {
+                          const value = Number(d[line.key]) || 0;
+                          return (
+                            <circle key={i} cx={xFor(i)} cy={yFor(value)} r="4" fill={line.color}>
+                              <title>{`${d[xKey]} — ${line.label}: ${formatValue(value)}`}</title>
+                            </circle>
+                          );
+                        })}
+                      </g>
+                    );
+                  })}
+                </svg>
+                <div className="flex flex-wrap gap-3 mt-2 px-2">
+                  {lines.map(line => (
+                    <div key={line.key} className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                      <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: line.color }}></span>
+                      {line.label}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-500 mt-2 px-2">Hover over a point to see the exact value.</p>
+              </div>
+            );
+          }
+'''
+          text = text[:old_start] + new_chart + text[old_end:]
+
+          marker = "  const [speciesFilter, setSpeciesFilter] = useState('');"
+          replacement = marker + "\n  const [productivitySpecies, setProductivitySpecies] = useState<string[]>([]);"
+          if "const [productivitySpecies, setProductivitySpecies]" not in text:
+              text = text.replace(marker, replacement, 1)
+
+          anchor = "  const openProductivityView = () => {"
+          species_fn = r'''  const fetchProductivitySpecies = async (state: string) => {
+    if (!state) return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/marine-productivity/species?state=${encodeURIComponent(state)}`);
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+      const data = await res.json();
+      setProductivitySpecies(data.species || []);
+    } catch (err) {
+      console.error('Failed to load species options:', err);
+      setProductivitySpecies([]);
+    }
+  };
+
+  useEffect(() => {
+    if (regionA) fetchProductivitySpecies(regionA);
+  }, [regionA]);
+
+'''
+          if "const fetchProductivitySpecies = async" not in text:
+              text = text.replace(anchor, species_fn + anchor, 1)
+
+          old_select = r'''                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-wider text-slate-500">Species (optional)</label>
+                  <input
+                    type="text"
+                    value={speciesFilter}
+                    onChange={e => setSpeciesFilter(e.target.value)}
+                    placeholder="e.g. Sardines"
+                    className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white w-40 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>'''
+          new_select = r'''                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-wider text-slate-500">Species</label>
+                  <select
+                    value={speciesFilter}
+                    onChange={e => setSpeciesFilter(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white min-w-[190px] focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="">All species (Total Catch)</option>
+                    {productivitySpecies.map(species => (
+                      <option key={species} value={species}>{species}</option>
+                    ))}
+                  </select>
+                </div>'''
+          if old_select not in text:
+              raise SystemExit('Species selector block not found')
+          text = text.replace(old_select, new_select, 1)
+
+          old_region = """                    onChange={e => setRegionA(e.target.value)}"""
+          new_region = """                    onChange={e => { setRegionA(e.target.value); setSpeciesFilter(''); }}"""
+          text = text.replace(old_region, new_region, 1)
+
+          text = text.replace(
+              "<p className=\"text-sm text-slate-300 leading-relaxed\">{analysis.explanation.text}</p>",
+              "<p className=\"text-sm text-slate-300 leading-relaxed\">{analysis.explanation.text}</p>",
+              1
+          )
+
+          app_path.write_text(text, encoding='utf-8')
+
+          backend_path = Path('orca-backend/marine_productivity.py')
+          b = backend_path.read_text(encoding='utf-8')
+
+          old_explain = '''def _explain(m,s,species):
+    delta=float(m.iloc[-1].catch-m.iloc[0].catch) if len(m)>1 else 0; direction="increasing" if delta>0 else "decreasing" if delta<0 else "stable"; cr=_corr(m["catch"],m["chlorophyll"]); sr=_corr(m["catch"],m["sst"]); peak=s.loc[s["mean_catch"].idxmax(),"Season"] if not s.empty else None
+    return {"direction":direction,"text":f"Landings are {direction} across the selected period. Catch–chlorophyll correlation is {cr:.2f} and catch–SST correlation is {sr:.2f}. Highest mean seasonal catch occurs in {peak}. Environmental variables are supporting correlation evidence, not proof of causation.","caution":"The SST/chlorophyll series is synthetic and should be replaced by observed satellite/oceanographic data before scientific publication.","peak_season":peak}
+'''
+          new_explain = '''def _explain(m,s,species):
+    if len(m) <= 1:
+        direction = "stable"
+    else:
+        y = m["catch"].astype(float).to_numpy()
+        x = np.arange(len(y), dtype=float)
+        mean_y = float(np.mean(y)) if len(y) else 0.0
+        slope = float(np.polyfit(x, y, 1)[0]) if len(y) > 1 else 0.0
+        normalized_slope = abs(slope) / mean_y if mean_y else 0.0
+        direction = "stable" if normalized_slope <= 0.02 else ("increasing" if slope > 0 else "decreasing")
+
+    cr=_corr(m["catch"],m["chlorophyll"]); sr=_corr(m["catch"],m["sst"]); peak=s.loc[s["mean_catch"].idxmax(),"Season"] if not s.empty else None
+    if direction == "stable":
+        trend_text = "Landings remain relatively stable across the selected period, with no meaningful overall upward or downward trend."
+    else:
+        trend_text = f"Landings are {direction} across the selected period."
+    cr_text = "N/A" if cr is None else f"{cr:.2f}"
+    sr_text = "N/A" if sr is None else f"{sr:.2f}"
+    return {"direction":direction,"text":f"{trend_text} Catch–chlorophyll correlation is {cr_text} and catch–SST correlation is {sr_text}. Highest mean seasonal catch occurs in {peak}. Environmental variables are supporting correlation evidence, not proof of causation.","caution":"The SST/chlorophyll series is synthetic and should be replaced by observed satellite/oceanographic data before scientific publication.","peak_season":peak}
+'''
+          if old_explain not in b:
+              raise SystemExit('Explanation function block not found')
+          b = b.replace(old_explain, new_explain, 1)
+
+          route_anchor = '''@router.get("/analysis")
+'''
+          species_route = '''@router.get("/species")
+def species(state:str=Query(...)):
+    _,_,states=_load(); state=_clean(state)
+    if state not in states:
+        raise HTTPException(404, detail={"message":"Unknown coastal region","supported_states":sorted(states.keys())})
+    land,_,_= _load()
+    x=_landing_year_species(land,states[state])
+    return {"state":state,"species":sorted(x["Species"].unique().tolist())}
+
+'''
+          if '@router.get("/species")' not in b:
+              b = b.replace(route_anchor, species_route + route_anchor, 1)
+          backend_path.write_text(b, encoding='utf-8')
+          PY
+
+      - name: Commit patched files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add orca-frontend/src/App.tsx orca-backend/marine_productivity.py
+          git diff --cached --quiet || git commit -m "Improve marine productivity catch charts and species filtering"
+          git push
+
+      - name: Remove patch workflow
+        if: success()
+        run: |
+          rm -f .github/workflows/patch-productivity-ui.yml
+          git add .github/workflows/patch-productivity-ui.yml
+          git commit -m "Remove one-time productivity patch workflow"
+          git push
