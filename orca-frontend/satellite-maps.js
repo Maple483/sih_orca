@@ -17,6 +17,13 @@
       #${HOLDER_ID} .leaflet-container{font:11px ui-sans-serif,system-ui,sans-serif}
       #${HOLDER_ID} .sat-title{display:flex;align-items:center;justify-content:space-between;gap:8px}
       #${HOLDER_ID} .sat-current{font-size:9px;color:#34d399;border:1px solid #065f46;border-radius:999px;padding:3px 7px;font-weight:700;white-space:nowrap}
+      #${HOLDER_ID} .sat-legend{position:absolute;left:10px;bottom:10px;z-index:1000;min-width:230px;padding:8px 9px;border:1px solid rgba(51,65,85,.95);border-radius:8px;background:rgba(2,6,23,.9);box-shadow:0 6px 18px rgba(0,0,0,.3);color:#e2e8f0}
+      #${HOLDER_ID} .sat-legend-title{font-size:10px;font-weight:700;margin-bottom:6px}
+      #${HOLDER_ID} .sat-gradient{height:10px;border-radius:999px;border:1px solid rgba(255,255,255,.2)}
+      #${HOLDER_ID} .sst-gradient{background:linear-gradient(90deg,#2b001a 0%,#4b0030 14%,#65124d 28%,#3d47a5 42%,#087fd8 55%,#00bfae 68%,#8bd646 80%,#f5e942 91%,#ff8c24 100%)}
+      #${HOLDER_ID} .chl-gradient{background:linear-gradient(90deg,#1b1464 0%,#185ac6 18%,#14b8a6 38%,#5ccf73 55%,#d8df42 72%,#f5a623 86%,#d7191c 100%)}
+      #${HOLDER_ID} .sat-legend-scale{display:flex;justify-content:space-between;gap:8px;margin-top:4px;font-size:9px;color:#cbd5e1}
+      #${HOLDER_ID} .leaflet-control-attribution{font-size:8px}
       @media(max-width:700px){#${HOLDER_ID}{grid-template-columns:1fr}#${HOLDER_ID} .sat-map{height:340px}}
     `;
     document.head.appendChild(style);
@@ -30,7 +37,30 @@
     maps = [];
   }
 
-  function makeMap(containerId, title, layerName) {
+  function addLegend(map, type) {
+    const control = window.L.control({ position: 'bottomleft' });
+    control.onAdd = () => {
+      const div = window.L.DomUtil.create('div', 'sat-legend');
+      if (type === 'sst') {
+        div.innerHTML = `
+          <div class="sat-legend-title">Sea Surface Temperature (°C)</div>
+          <div class="sat-gradient sst-gradient"></div>
+          <div class="sat-legend-scale"><span>&lt; 0</span><span>8</span><span>16</span><span>24</span><span>≥ 32</span></div>
+        `;
+      } else {
+        div.innerHTML = `
+          <div class="sat-legend-title">Chlorophyll-a (mg/m³)</div>
+          <div class="sat-gradient chl-gradient"></div>
+          <div class="sat-legend-scale"><span>&lt; 0.01</span><span>0.1</span><span>1</span><span>10</span><span>≥ 20</span></div>
+        `;
+      }
+      window.L.DomEvent.disableClickPropagation(div);
+      return div;
+    };
+    control.addTo(map);
+  }
+
+  function makeMap(containerId, layerName, type) {
     const map = window.L.map(containerId, {
       zoomControl: true,
       scrollWheelZoom: false,
@@ -56,7 +86,6 @@
       attribution: 'NASA GIBS',
     }).addTo(map);
 
-    // Existing ORCA EEZ-style boundary is represented here as a simple marine-area focus.
     window.L.rectangle(INDIA_MARINE_BOUNDS, {
       color: '#38bdf8',
       weight: 1,
@@ -66,6 +95,7 @@
     }).addTo(map);
 
     window.L.control.scale({ imperial: false }).addTo(map);
+    addLegend(map, type);
     return map;
   }
 
@@ -87,12 +117,12 @@
         <section class="pe-card sat-card">
           <h3 class="sat-title"><span>Current Satellite SST — Indian Marine Waters</span><span class="sat-current">LIVE / BEST AVAILABLE</span></h3>
           <div id="orca-satellite-sst-map" class="sat-map"></div>
-          <div class="sat-meta">NASA GIBS · GHRSST Level 4 MUR Sea Surface Temperature · Current best-available layer</div>
+          <div class="sat-meta">NASA GIBS · GHRSST Level 4 MUR Sea Surface Temperature · Legend shown on map: 0–32 °C.</div>
         </section>
         <section class="pe-card sat-card">
           <h3 class="sat-title"><span>Current Satellite Chlorophyll-a — Indian Marine Waters</span><span class="sat-current">LIVE / BEST AVAILABLE</span></h3>
           <div id="orca-satellite-chl-map" class="sat-map"></div>
-          <div class="sat-meta">NASA GIBS · NOAA-20 / VIIRS Chlorophyll-a · Current best-available layer</div>
+          <div class="sat-meta">NASA GIBS · NOAA-20 / VIIRS Chlorophyll-a · Legend shown on map: 0.01–20 mg/m³.</div>
         </section>
       `;
       content.appendChild(holder);
@@ -100,8 +130,8 @@
 
     if (maps.length === 0 && holder.querySelector('#orca-satellite-sst-map') && holder.querySelector('#orca-satellite-chl-map')) {
       maps = [
-        makeMap('orca-satellite-sst-map', 'SST', 'GHRSST_L4_MUR_Sea_Surface_Temperature'),
-        makeMap('orca-satellite-chl-map', 'Chlorophyll-a', 'VIIRS_NOAA20_Chlorophyll_a'),
+        makeMap('orca-satellite-sst-map', 'GHRSST_L4_MUR_Sea_Surface_Temperature', 'sst'),
+        makeMap('orca-satellite-chl-map', 'VIIRS_NOAA20_Chlorophyll_a', 'chl'),
       ];
       requestAnimationFrame(() => maps.forEach(map => map.invalidateSize()));
     }
