@@ -34,7 +34,9 @@
       #orca-satellite-fullscreen .sat-fs-map{width:100%;height:100%;background:#020617}
       #orca-satellite-fullscreen .sat-fs-legend{position:absolute;left:18px;bottom:18px;z-index:1001;width:min(320px,calc(100% - 36px));padding:12px 14px;border:1px solid #475569;border-radius:10px;background:rgba(2,6,23,.94);box-shadow:0 10px 30px rgba(0,0,0,.35)}
       #orca-satellite-fullscreen .sat-fs-legend-title{font-size:12px;font-weight:800;margin-bottom:8px}
-      #orca-satellite-fullscreen .sat-fs-gradient{height:14px;border-radius:999px;border:1px solid rgba(255,255,255,.24)}
+      #orca-satellite-fullscreen .sat-fs-gradient{height:14px;width:100%;display:block;border-radius:999px;border:1px solid rgba(255,255,255,.24)}
+      #orca-satellite-fullscreen .sat-fs-gradient.sst-gradient{background:linear-gradient(90deg,#2b001a 0%,#4b0030 14%,#65124d 28%,#3d47a5 42%,#087fd8 55%,#00bfae 68%,#8bd646 80%,#f5e942 91%,#ff8c24 100%)}
+      #orca-satellite-fullscreen .sat-fs-gradient.chl-gradient{background:linear-gradient(90deg,#1b1464 0%,#185ac6 18%,#14b8a6 38%,#5ccf73 55%,#d8df42 72%,#f5a623 86%,#d7191c 100%)}
       #orca-satellite-fullscreen .sat-fs-legend-scale{display:flex;justify-content:space-between;gap:10px;margin-top:5px;font-size:10px;color:#cbd5e1}
       #orca-satellite-fullscreen .sat-fs-hint{position:absolute;right:18px;bottom:18px;z-index:1001;padding:7px 10px;border-radius:8px;background:rgba(2,6,23,.8);color:#94a3b8;font-size:10px;border:1px solid #334155}
       #orca-satellite-fullscreen .leaflet-container{width:100%;height:100%}
