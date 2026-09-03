@@ -17,6 +17,10 @@ load_dotenv()
 from models import User, Vessel, TelemetryLog, Geofence, ProactiveAlertLog
 from agents.orchestrator import app as agent_brain
 
+# Marine Productivity / PFZ API router. Keep this mounted in the gateway itself
+# so deployments that start `main:app` expose the same endpoints as run.py.
+from marine_productivity import router as marine_productivity_router
+
 app = FastAPI(title="SagarMitra AI Backend Gateway")
 
 # Enable CORS for frontend dashboard access
@@ -27,6 +31,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount Marine Productivity + PFZ routes on the actual FastAPI app used by
+# both local and hosted deployments. In particular this exposes:
+# GET /api/marine-productivity/pfz
+# GET /api/marine-productivity/regions
+# GET /api/marine-productivity/species
+# GET /api/marine-productivity/environment
+# GET /api/marine-productivity/analysis
+# GET /api/marine-productivity/compare
+app.include_router(marine_productivity_router)
 
 
 # ==========================================
