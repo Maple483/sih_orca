@@ -1,26 +1,331 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, BarChart3, ChevronLeft, ChevronRight, Fish, GitCompare, Leaf, Thermometer, TriangleAlert, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Fish, LocateFixed, MapPin, Navigation, RefreshCw, Waves, X } from 'lucide-react';
 
-type Annual={Year:number;catch:number;sst:number;chlorophyll:number;catch_z:number;catch_anomaly:boolean};
-type Seasonal={Season:string;mean_catch:number;mean_sst:number;mean_chlorophyll:number};
-type SpeciesCatch={Species:string;catch_tonnes:number};
-type EnvPoint={Year:number;Month:number;Season:string;SST_C:number;Chlorophyll_mg_m3:number;SST_anomaly_C:number;Chlorophyll_anomaly_mg_m3:number;label:string};
-type Analysis={state:string;species_filter?:string;annual:Annual[];seasonal:Seasonal[];top_species:SpeciesCatch[];species:string[];correlation:{catch_vs_sst:number|null;catch_vs_chlorophyll:number|null};environment_trends:any;anomalies:{Year:number;catch:number;catch_z:number}[];explanation:{text:string;caution:string;peak_season:string|null;direction:string;sst_trend:string;chlorophyll_trend:string;sst_effect:string;chlorophyll_effect:string}};
-const API=(import.meta as any).env?.VITE_API_URL||'http://localhost:8000';
-const fmt=(n:number)=>new Intl.NumberFormat('en-IN',{maximumFractionDigits:1}).format(Number(n)||0);
-const monthNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function Card({title,children}:{title:string;children:any}){return <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div className="mb-3 flex items-center gap-2 text-xs font-bold text-slate-200"><BarChart3 className="h-4 w-4 text-cyan-400"/>{title}</div>{children}</section>}
-function Metric({icon,label,value}:{icon:any;label:string;value:string}){return <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3"><div className="flex items-center gap-1 text-[10px] text-slate-500">{icon}<span>{label}</span></div><div className="mt-1 text-sm font-bold text-slate-100">{value}</div></div>}
-function LineChart({data,valueKey,label,unit,pointColor='fill-cyan-400'}:{data:any[];valueKey:string;label:string;unit:string;pointColor?:string}){if(!data.length)return <div className="p-6 text-center text-xs text-slate-500">No data available.</div>;const values=data.map(d=>Number(d[valueKey])||0),max=Math.max(...values),min=Math.min(...values),range=max-min||1,w=760,h=260,l=58,r=18,t=18,b=42;const x=i=>l+i*(w-l-r)/Math.max(data.length-1,1),y=v=t+(max-v)*(h-t-b)/range;const pts=data.map((d,i)=>`${x(i)},${y(Number(d[valueKey])||0)}`).join(' ');const ticks=5;return <div className="overflow-x-auto"><svg viewBox={`0 0 ${w} ${h}`} className="h-60 min-w-[690px] w-full"><line x1={l} y1={t} x2={l} y2={h-b} className="stroke-slate-600"/><line x1={l} y1={h-b} x2={w-r} y2={h-b} className="stroke-slate-600"/>{Array.from({length:ticks+1},(_,i)=>{const v=min+(range*i/ticks);const yy=y(v);return <g key={i}><line x1={l} y1={yy} x2={w-r} y2={yy} className="stroke-slate-700"/><text x={l-7} y={yy+4} textAnchor="end" className="fill-slate-400 text-[11px]">{fmt(v)}</text></g>})}<polyline fill="none" stroke="currentColor" strokeWidth="3" className="text-cyan-400" points={pts}/>{data.map((d,i)=><g key={`${d.Year}-${d.Month??i}`}><circle cx={x(i)} cy={y(Number(d[valueKey])||0)} r="4" className={pointColor}><title>{label}: {fmt(Number(d[valueKey]))} {unit}{d.Year?`\nYear: ${d.Year}`:''}{d.Month?`\nMonth: ${monthNames[d.Month-1]}`:''}</title></circle>{data.length<=12&&<text x={x(i)} y={h-14} textAnchor="middle" className="fill-slate-500 text-[10px]">{d.Year}</text>}</g>)}</svg></div>}
-function MonthlyChart({data,valueKey,label,unit}:{data:EnvPoint[];valueKey:string;label:string;unit:string}){if(!data.length)return null;const values=data.map(d=>Number((d as any)[valueKey])||0),max=Math.max(...values),min=Math.min(...values),range=max-min||1,w=Math.max(980,data.length*14),h=280,l=60,r=18,t=18,b=50,x=i=>l+i*(w-l-r)/Math.max(data.length-1,1),y=v=>t+(max-v)*(h-t-b)/range;const pts=data.map((d,i)=>`${x(i)},${y(Number((d as any)[valueKey])||0)}`).join(' ');const ticks=5;return <div className="overflow-x-auto"><svg viewBox={`0 0 ${w} ${h}`} className="h-64 min-w-[980px] w-full">{Array.from({length:ticks+1},(_,i)=>{const v=min+range*i/ticks,yy=y(v);return <g key={i}><line x1={l} y1={yy} x2={w-r} y2={yy} className="stroke-slate-700"/><text x={l-7} y={yy+4} textAnchor="end" className="fill-slate-400 text-[11px]">{fmt(v)}</text></g>})}<line x1={l} y1={t} x2={l} y2={h-b} className="stroke-slate-600"/><line x1={l} y1={h-b} x2={w-r} y2={h-b} className="stroke-slate-600"/><polyline fill="none" stroke="currentColor" strokeWidth="2.5" className="text-cyan-400" points={pts}/>{data.map((d,i)=><g key={`${d.Year}-${d.Month}`}><circle cx={x(i)} cy={y(Number((d as any)[valueKey])||0)} r="3" className="fill-cyan-400"><title>{label}: {Number((d as any)[valueKey]).toFixed(3)} {unit}\n{monthNames[d.Month-1]} {d.Year}</title></circle>{d.Month===1&&<text x={x(i)} y={h-16} textAnchor="middle" className="fill-slate-300 text-[11px] font-semibold">{d.Year}</text>}</g>)}</svg></div>}
-function SeasonalChart({data}:{data:Seasonal[]}){if(!data.length)return null;const max=Math.max(...data.map(d=>d.mean_catch),1),w=720,h=250,l=62,r=20,t=15,b=50,base=h-b,barW=Math.min(95,(w-l-r)/data.length-18);return <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-56">{[0,.25,.5,.75,1].map((p,i)=>{const v=max*p,yy=base-p*(base-t);return <g key={i}><line x1={l} y1={yy} x2={w-r} y2={yy} className="stroke-slate-700"/><text x={l-7} y={yy+4} textAnchor="end" className="fill-slate-400 text-[11px]">{fmt(v)}</text></g>})}{data.map((d,i)=>{const bh=(d.mean_catch/max)*(base-t),bx=l+(i+.5)*(w-l-r)/data.length-barW/2;return <g key={d.Season}><rect x={bx} y={base-bh} width={barW} height={bh} rx="4" className="fill-cyan-500/80"><title>{d.Season}: {fmt(d.mean_catch)} t\nSST: {d.mean_sst.toFixed(2)} °C\nChlorophyll-a: {d.mean_chlorophyll.toFixed(3)} mg/m³</title></rect><text x={bx+barW/2} y={h-25} textAnchor="middle" className="fill-slate-300 text-[10px]">{d.Season.replace('Pre-Monsoon','Pre-Monsoon').replace('Post-Monsoon','Post-Monsoon')}</text></g>})}</svg>}
-function TopSpeciesChart({data}:{data:SpeciesCatch[]}){const rows=data.slice(0,8),max=Math.max(...rows.map(x=>x.catch_tonnes),1);return <div className="space-y-2">{rows.map((s,i)=><div key={s.Species} className="group"><div className="mb-1 flex justify-between gap-2 text-[10px]"><span className="truncate text-slate-300">{i+1}. {s.Species}</span><span className="text-cyan-300">{fmt(s.catch_tonnes)} t</span></div><div className="h-2 rounded bg-slate-800"><div className="h-2 rounded bg-cyan-500/70" style={{width:`${Math.max(2,s.catch_tonnes/max*100)}%`}}><span className="sr-only">{fmt(s.catch_tonnes)} tonnes</span></div></div></div>)}</div>}
-function Corr({label,value}:{label:string;value:number|null}){const v=value??0;return <div className="rounded-lg border border-slate-800 p-3"><div className="text-[10px] text-slate-500">Catch vs {label}</div><div className="text-lg font-bold text-slate-100">{value==null?'—':value.toFixed(2)}</div><div className="mt-2 h-1.5 rounded bg-slate-800"><div className={v>=0?'h-full rounded bg-emerald-400':'h-full rounded bg-orange-400'} style={{width:`${Math.min(100,Math.abs(v)*100)}%`}}/></div></div>}
-export default function FishProductivityPanel(){const[open,setOpen]=useState(true),[regions,setRegions]=useState<string[]>([]),[state,setState]=useState(''),[species,setSpecies]=useState(''),[speciesOptions,setSpeciesOptions]=useState<string[]>([]),[compareState,setCompareState]=useState(''),[data,setData]=useState<Analysis|null>(null),[environment,setEnvironment]=useState<{monthly:EnvPoint[];sst_trend:any;chlorophyll_trend:any}|null>(null),[comparison,setComparison]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(false);
-useEffect(()=>{fetch(`${API}/api/marine-productivity/regions`).then(r=>{if(!r.ok)throw new Error('Backend returned an error');return r.json()}).then(x=>{setRegions(x.regions||[]);if(x.regions?.length)setState(x.regions[0])}).catch((e:unknown)=>setError(e instanceof Error?e.message:'Marine productivity API unavailable. Start the ORCA backend on port 8000.'))},[]);
-useEffect(()=>{if(!state)return;fetch(`${API}/api/marine-productivity/species?state=${encodeURIComponent(state)}`).then(r=>r.json()).then(x=>setSpeciesOptions(x.species||[])).catch(()=>setSpeciesOptions([]));setSpecies('');setComparison(null)},[state]);
-useEffect(()=>{if(!state)return;setLoading(true);setError('');Promise.all([fetch(`${API}/api/marine-productivity/analysis?state=${encodeURIComponent(state)}${species?`&species=${encodeURIComponent(species)}`:''}`).then(async r=>{if(!r.ok)throw new Error((await r.json()).detail?.message||'Unable to load analysis');return r.json()}),fetch(`${API}/api/marine-productivity/environment?state=${encodeURIComponent(state)}`).then(async r=>{if(!r.ok)throw new Error('Unable to load SST/chlorophyll data');return r.json()})]).then(([a,e])=>{setData(a);setEnvironment(e)}).catch((e:unknown)=>setError(e instanceof Error?e.message:'Unable to load analysis')).finally(()=>setLoading(false))},[state,species]);
-const compare=async()=>{if(!compareState)return;try{const r=await fetch(`${API}/api/marine-productivity/compare?region_a=${encodeURIComponent(state)}&region_b=${encodeURIComponent(compareState)}${species?`&species=${encodeURIComponent(species)}`:''}`);if(!r.ok)throw new Error('Comparison failed');setComparison(await r.json())}catch(e:unknown){setError(e instanceof Error?e.message:'Comparison failed')}};
-const trend=useMemo(()=>data?.annual.length?((data.annual[data.annual.length-1].catch-data.annual[0].catch)/Math.max(data.annual[0].catch,1))*100:0,[data]);
-const trendLabel=data?.explanation.direction==='stable'?'Broadly stable':data?.explanation.direction==='increasing'?'Increasing':'Decreasing';
-return <><button onClick={()=>setOpen(v=>!v)} className="fixed left-3 top-24 z-[9999] flex items-center gap-2 rounded-xl border border-cyan-400/60 bg-slate-950 px-4 py-3 text-sm font-bold text-cyan-300 shadow-2xl ring-1 ring-cyan-500/20"><Fish className="h-5 w-5"/>Marine Productivity{open?<ChevronLeft/>:<ChevronRight/>}</button>{open&&<aside className="fixed left-0 top-0 bottom-0 z-[9998] w-[500px] max-w-[96vw] overflow-y-auto border-r border-cyan-500/30 bg-slate-950 shadow-2xl"><header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-950 p-4"><div><div className="flex items-center gap-2 text-sm font-bold text-slate-100"><Fish className="h-5 w-5 text-cyan-400"/>Marine Productivity</div><div className="text-[10px] text-slate-500">Landings × SST × chlorophyll · 2007–2012</div></div><button onClick={()=>setOpen(false)} className="rounded-lg p-1 hover:bg-slate-800"><X className="text-slate-500"/></button></header><div className="space-y-4 p-4"><section className="rounded-xl border border-slate-800 bg-slate-900/70 p-3"><div className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Region & fish filter</div><select value={state} onChange={e=>setState(e.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"><option value="" disabled>Select coastal region</option>{regions.map(r=><option key={r}>{r}</option>)}</select><select value={species} onChange={e=>setSpecies(e.target.value)} className="mt-3 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"><option value="">All fish / total catch</option>{speciesOptions.map(s=><option key={s}>{s}</option>)}</select><div className="mt-2 text-[10px] text-slate-500">No fish selected = entire catch. Selecting a fish filters annual, seasonal and species catch to that fish only.</div></section>{error&&<div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300"><TriangleAlert className="mr-1 inline h-4 w-4"/>{error}</div>}{loading&&<div className="p-6 text-center text-xs text-slate-500">Computing marine productivity…</div>}{data&&!loading&&<><div className="grid grid-cols-2 gap-2"><Metric icon={<Fish/>} label={species||'Mean annual catch'} value={`${fmt(data.annual.reduce((a,b)=>a+b.catch,0)/Math.max(data.annual.length,1))} t`}/><Metric icon={<Activity/>} label="Overall catch trend" value={`${trendLabel} (${trend>=0?'+':''}${trend.toFixed(1)}%)`}/><Metric icon={<Thermometer/>} label="Mean SST" value={`${(data.annual.reduce((a,b)=>a+b.sst,0)/Math.max(data.annual.length,1)).toFixed(2)} °C`}/><Metric icon={<Leaf/>} label="Mean chlorophyll-a" value={`${(data.annual.reduce((a,b)=>a+b.chlorophyll,0)/Math.max(data.annual.length,1)).toFixed(3)} mg/m³`}/></div><Card title={`${species||'Total'} annual catch — exact values on hover`}><LineChart data={data.annual} valueKey="catch" label="Catch" unit="tonnes"/><div className="mt-1 text-[10px] text-slate-500">Y-axis shows catch values. Hover any point for the exact value.</div></Card><Card title="Seasonal catch — exact values on hover"><SeasonalChart data={data.seasonal}/><div className="text-[10px] text-slate-500">Y-axis = tonnes. Hover a bar for exact catch, SST and chlorophyll-a.</div></Card><Card title={species?`Selected species: ${species}`:'Top species catch'}><TopSpeciesChart data={data.top_species}/>{species&&<div className="mt-2 text-[10px] text-slate-500">Because a species is selected, this section contains only that species.</div>}</Card>{environment&&<><Card title="Monthly SST — 2007–2012"><MonthlyChart data={environment.monthly} valueKey="SST_C" label="SST" unit="°C"/><div className="text-[10px] text-slate-500">All 72 monthly means are plotted. Each point shows the exact month/year value on hover; year labels mark January.</div></Card><Card title="Monthly chlorophyll-a — 2007–2012"><MonthlyChart data={environment.monthly} valueKey="Chlorophyll_mg_m3" label="Chlorophyll-a" unit="mg/m³"/><div className="text-[10px] text-slate-500">All 72 monthly means are plotted for year-to-year and seasonal comparison.</div></Card></>}<Card title="What is happening in plain language?"><div className="space-y-2 text-xs leading-relaxed text-slate-300"><p>{data.explanation.text}</p><div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><div className="rounded-lg border border-slate-800 p-2"><b className="text-slate-200">SST: {data.explanation.sst_trend}</b><div className="text-[10px] text-slate-500">Catch relationship: {data.explanation.sst_effect}</div></div><div className="rounded-lg border border-slate-800 p-2"><b className="text-slate-200">Chlorophyll-a: {data.explanation.chlorophyll_trend}</b><div className="text-[10px] text-slate-500">Catch relationship: {data.explanation.chlorophyll_effect}</div></div></div></div><div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-[10px] text-amber-300">{data.explanation.caution}</div></Card><Card title="Catch ↔ environment correlation"><div className="grid grid-cols-2 gap-2"><Corr label="SST" value={data.correlation.catch_vs_sst}/><Corr label="Chlorophyll-a" value={data.correlation.catch_vs_chlorophyll}/></div><p className="mt-2 text-[10px] text-slate-500">Pearson r. Positive/negative describes association, not direct causation.</p></Card><Card title="Anomaly detection">{data.anomalies.length?data.anomalies.map(a=><div key={a.Year} className="flex justify-between rounded bg-red-500/10 px-2 py-1 text-xs"><span>{a.Year}</span><span>{fmt(a.catch)} t · z={a.catch_z.toFixed(2)}</span></div>):<div className="text-xs text-slate-500">No catch anomalies under the |z| ≥ 2 rule.</div>}</Card><Card title="Region vs region"><div className="flex gap-2"><select value={compareState} onChange={e=>setCompareState(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-slate-200"><option value="">Compare with…</option>{regions.filter(r=>r!==state).map(r=><option key={r}>{r}</option>)}</select><button onClick={compare} disabled={!compareState} className="rounded-lg bg-cyan-500 px-3 text-slate-950 disabled:opacity-40"><GitCompare className="h-4 w-4"/></button></div>{comparison&&<div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">{[comparison.region_a,comparison.region_b].map((r:any)=><div key={r.state} className="rounded-lg border border-slate-800 p-2"><b>{r.state}</b><div>Catch {fmt(r.mean_catch)} t</div><div>SST {r.mean_sst.toFixed(1)}°C</div><div>Chl {r.mean_chlorophyll.toFixed(2)}</div></div>)}</div>}</Card></>}</div></aside>}</>}
+type LiveConditions = {
+  sst_c?: number | null;
+  satellite_sst_c?: number | null;
+  wave_height_m?: number | null;
+  wave_direction_deg?: number | null;
+  wave_period_s?: number | null;
+  current_velocity_kmh?: number | null;
+  current_direction_deg?: number | null;
+  source?: string;
+  satellite_sst_source?: string;
+  error?: string;
+};
+
+type PFZResult = {
+  rank: number;
+  rank_score: number;
+  distance_km: number;
+  from_coast: string;
+  direction: string;
+  bearing_deg: number | null;
+  distance_advisory_km: string;
+  depth_m: string;
+  lat: number;
+  lon: number;
+  state: string;
+  forecast_validity: string;
+  reasons: string[];
+};
+
+type PFZResponse = {
+  status: string;
+  user_location: { lat: number; lon: number };
+  generated_at?: string;
+  live_conditions: LiveConditions;
+  results: PFZResult[];
+  method: string;
+  message?: string;
+};
+
+const API = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+const SAMPLE_LOCATIONS = [
+  { name: 'Chennai coast', lat: 13.08, lon: 80.27 },
+  { name: 'Goa coast', lat: 15.50, lon: 73.55 },
+  { name: 'Kochi coast', lat: 9.93, lon: 76.26 },
+  { name: 'Mumbai coast', lat: 18.96, lon: 72.82 },
+];
+
+const fmt = (value: number | null | undefined, digits = 1) =>
+  value == null || Number.isNaN(Number(value)) ? '—' : Number(value).toFixed(digits);
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-2.5">
+      <div className="text-[9px] uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-bold text-slate-100">{value}</div>
+    </div>
+  );
+}
+
+function PFZMap({ userLat, userLon, results }: { userLat: number; userLon: number; results: PFZResult[] }) {
+  const points = results.slice(0, 5);
+  const allLat = [userLat, ...points.map(p => p.lat)];
+  const allLon = [userLon, ...points.map(p => p.lon)];
+  const minLat = Math.min(...allLat);
+  const maxLat = Math.max(...allLat);
+  const minLon = Math.min(...allLon);
+  const maxLon = Math.max(...allLon);
+  const latRange = Math.max(maxLat - minLat, 0.4);
+  const lonRange = Math.max(maxLon - minLon, 0.4);
+  const padLat = latRange * 0.18;
+  const padLon = lonRange * 0.18;
+  const loLat = minLat - padLat;
+  const hiLat = maxLat + padLat;
+  const loLon = minLon - padLon;
+  const hiLon = maxLon + padLon;
+
+  const xy = (lat: number, lon: number) => ({
+    x: 42 + ((lon - loLon) / Math.max(hiLon - loLon, 0.001)) * 316,
+    y: 168 - ((lat - loLat) / Math.max(hiLat - loLat, 0.001)) * 128,
+  });
+
+  const user = xy(userLat, userLon);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+      <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">PFZ proximity view</div>
+        <div className="flex items-center gap-3 text-[9px] text-slate-500">
+          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-white" /> You</span>
+          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-400" /> PFZ</span>
+        </div>
+      </div>
+      <svg viewBox="0 0 400 200" className="h-48 w-full">
+        <defs>
+          <pattern id="pfz-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+            <path d="M 32 0 L 0 0 0 32" fill="none" className="stroke-slate-800" strokeWidth="0.7" />
+          </pattern>
+        </defs>
+        <rect width="400" height="200" fill="url(#pfz-grid)" />
+        {points.map((p, idx) => {
+          const q = xy(p.lat, p.lon);
+          return (
+            <g key={`${p.lat}-${p.lon}`}>
+              <line x1={user.x} y1={user.y} x2={q.x} y2={q.y} className={idx === 0 ? 'stroke-emerald-500/60' : 'stroke-slate-700'} strokeWidth={idx === 0 ? 2 : 1} strokeDasharray="4 4" />
+              <circle cx={q.x} cy={q.y} r={idx === 0 ? 7 : 5} className={idx === 0 ? 'fill-emerald-400/20 stroke-emerald-300' : 'fill-cyan-400/15 stroke-cyan-400'} strokeWidth="1.5" />
+              <text x={q.x + 8} y={q.y + 3} className="fill-slate-300 text-[9px]">#{p.rank} {p.from_coast || p.state || 'PFZ'}</text>
+            </g>
+          );
+        })}
+        <circle cx={user.x} cy={user.y} r="7" className="fill-white/20 stroke-white" strokeWidth="2" />
+        <circle cx={user.x} cy={user.y} r="2.5" className="fill-white" />
+        <text x={user.x + 9} y={user.y + 3} className="fill-white text-[9px] font-semibold">Your position</text>
+      </svg>
+    </div>
+  );
+}
+
+export default function FishProductivityPanel() {
+  const [open, setOpen] = useState(false);
+  const [lat, setLat] = useState('13.08');
+  const [lon, setLon] = useState('80.27');
+  const [sample, setSample] = useState('Chennai coast');
+  const [data, setData] = useState<PFZResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const nearestDistance = useMemo(() => data?.results?.[0]?.distance_km ?? null, [data]);
+  const nearest = data?.results?.[0];
+
+  const findPFZ = async () => {
+    const latitude = Number(lat);
+    const longitude = Number(lon);
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      setError('Enter valid latitude (-90 to 90) and longitude (-180 to 180).');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`${API}/api/marine-productivity/pfz?lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}&max_results=5`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.detail?.message || payload?.message || `Server returned ${response.status}`);
+      }
+      setData(payload as PFZResponse);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load PFZ recommendations.');
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const useBrowserLocation = () => {
+    if (!navigator.geolocation) {
+      setError('Browser geolocation is not available. Enter the fisherman\'s coordinates manually.');
+      return;
+    }
+    setLocationLoading(true);
+    setError('');
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        setLat(position.coords.latitude.toFixed(5));
+        setLon(position.coords.longitude.toFixed(5));
+        setSample('Current device location');
+        setLocationLoading(false);
+      },
+      () => {
+        setError('Location permission was denied or unavailable. Enter coordinates manually.');
+        setLocationLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+  };
+
+  const chooseSample = (name: string) => {
+    const item = SAMPLE_LOCATIONS.find(x => x.name === name);
+    if (!item) return;
+    setSample(item.name);
+    setLat(item.lat.toFixed(2));
+    setLon(item.lon.toFixed(2));
+  };
+
+  useEffect(() => {
+    if (!open && !data) return;
+    if (!data) findPFZ();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="fixed bottom-5 right-5 z-[1700] flex items-center gap-2 rounded-xl border border-emerald-400/50 bg-slate-950/95 px-4 py-3 text-sm font-bold text-emerald-300 shadow-2xl backdrop-blur-md hover:bg-slate-900"
+        title="Potential Fishing Zone Finder"
+      >
+        <Fish className="h-5 w-5" />
+        PFZ Finder
+      </button>
+
+      {open && (
+        <aside className="fixed bottom-20 right-5 z-[1699] max-h-[78vh] w-[470px] max-w-[94vw] overflow-y-auto rounded-2xl border border-emerald-400/30 bg-slate-950/98 shadow-2xl backdrop-blur-xl">
+          <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-950/98 p-4">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-100">
+                <Fish className="h-5 w-5 text-emerald-400" />
+                Potential Fishing Zone Finder
+              </div>
+              <div className="mt-0.5 text-[10px] text-slate-500">Fisher location → live marine conditions → nearest ranked PFZ</div>
+            </div>
+            <button onClick={() => setOpen(false)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-800 hover:text-white"><X className="h-4 w-4" /></button>
+          </header>
+
+          <div className="space-y-4 p-4">
+            <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Fisherman location</div>
+                <button onClick={useBrowserLocation} className="flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 text-[10px] text-cyan-300 hover:bg-slate-800">
+                  {locationLoading ? <RefreshCw className="h-3 w-3 animate-spin" /> : <LocateFixed className="h-3 w-3" />}
+                  Use device GPS
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-[10px] text-slate-500">Latitude<input value={lat} onChange={e => setLat(e.target.value)} type="number" step="any" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-white outline-none focus:border-emerald-400" /></label>
+                <label className="text-[10px] text-slate-500">Longitude<input value={lon} onChange={e => setLon(e.target.value)} type="number" step="any" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-white outline-none focus:border-emerald-400" /></label>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <select value={sample} onChange={e => chooseSample(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-slate-300">
+                  <option value="Chennai coast">Try Chennai coast</option>
+                  <option value="Goa coast">Try Goa coast</option>
+                  <option value="Kochi coast">Try Kochi coast</option>
+                  <option value="Mumbai coast">Try Mumbai coast</option>
+                  <option value="Current device location">Current device location</option>
+                </select>
+                <button onClick={findPFZ} disabled={loading} className="flex items-center gap-2 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50">
+                  {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Navigation className="h-4 w-4" />}
+                  Find best PFZ
+                </button>
+              </div>
+              <div className="mt-2 text-[9px] text-slate-500">For testing, use a sample near a known advisory. The expected nearest candidate should normally appear at rank #1.</div>
+            </section>
+
+            {error && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
+                <AlertTriangle className="mr-1 inline h-4 w-4" />{error}
+              </div>
+            )}
+
+            {data && (
+              <>
+                <section className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-emerald-300">Best available PFZ</div>
+                      <div className="mt-1 text-base font-bold text-white">#{nearest?.rank} {nearest?.from_coast || 'PFZ Advisory'}</div>
+                      <div className="mt-1 text-[11px] text-slate-400">{nearest?.state} · {fmt(nearestDistance)} km from your position · score {fmt(nearest?.rank_score, 0)}/100</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <Metric label="Bearing" value={nearest?.bearing_deg == null ? '—' : `${fmt(nearest.bearing_deg, 0)}°`} />
+                    <Metric label="Direction" value={nearest?.direction || '—'} />
+                    <Metric label="Advisory distance" value={nearest?.distance_advisory_km || '—'} />
+                    <Metric label="Depth" value={nearest?.depth_m || '—'} />
+                  </div>
+                </section>
+
+                <section>
+                  <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400"><Waves className="h-3.5 w-3.5 text-cyan-400" />Live marine conditions used in ranking</div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <Metric label="Satellite SST" value={`${fmt(data.live_conditions.satellite_sst_c, 2)} °C`} />
+                    <Metric label="Model SST" value={`${fmt(data.live_conditions.sst_c, 2)} °C`} />
+                    <Metric label="Wave height" value={`${fmt(data.live_conditions.wave_height_m, 2)} m`} />
+                    <Metric label="Wave period" value={`${fmt(data.live_conditions.wave_period_s, 1)} s`} />
+                    <Metric label="Ocean current" value={`${fmt(data.live_conditions.current_velocity_kmh, 2)} km/h`} />
+                    <Metric label="Current direction" value={data.live_conditions.current_direction_deg == null ? '—' : `${fmt(data.live_conditions.current_direction_deg, 0)}°`} />
+                  </div>
+                  <div className="mt-2 text-[9px] text-slate-600">{data.live_conditions.satellite_sst_source || data.live_conditions.source || 'Live source status unavailable.'}</div>
+                </section>
+
+                <PFZMap userLat={data.user_location.lat} userLon={data.user_location.lon} results={data.results} />
+
+                <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Ranked PFZ advisories</div>
+                    <div className="text-[9px] text-slate-500">{data.results.length} candidates</div>
+                  </div>
+                  <div className="space-y-2">
+                    {data.results.map((pfz, index) => (
+                      <div key={`${pfz.lat}-${pfz.lon}`} className={`rounded-lg border p-3 ${index === 0 ? 'border-emerald-500/35 bg-emerald-500/5' : 'border-slate-800 bg-slate-950/60'}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[9px] font-bold text-slate-300">#{pfz.rank}</span>
+                              <span className="truncate text-xs font-bold text-slate-100">{pfz.from_coast || 'PFZ Advisory'}</span>
+                            </div>
+                            <div className="mt-1 flex items-center gap-2 text-[9px] text-slate-500"><MapPin className="h-3 w-3" />{pfz.lat.toFixed(4)}, {pfz.lon.toFixed(4)} · {pfz.state}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-bold text-emerald-300">{fmt(pfz.distance_km)} km</div>
+                            <div className="text-[9px] text-slate-500">score {fmt(pfz.rank_score, 0)}</div>
+                          </div>
+                        </div>
+                        <div className="mt-2 grid grid-cols-3 gap-2 text-[9px] text-slate-400">
+                          <span>Bearing <b className="text-slate-200">{pfz.bearing_deg == null ? '—' : `${fmt(pfz.bearing_deg, 0)}°`}</b></span>
+                          <span>Dir <b className="text-slate-200">{pfz.direction || '—'}</b></span>
+                          <span>Depth <b className="text-slate-200">{pfz.depth_m || '—'}</b></span>
+                        </div>
+                        {pfz.reasons.length > 0 && <div className="mt-2 text-[9px] text-emerald-300/80">Why ranked: {pfz.reasons.join(' · ')}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-[9px] leading-relaxed text-slate-500">
+                  <div className="mb-1 flex items-center gap-1 font-bold text-slate-300"><ChevronDown className="h-3 w-3" />How to verify the result</div>
+                  The ranking starts from the repository PFZ advisories, then uses fisher-to-PFZ distance and advisory freshness, while live SST/wave conditions adjust the score. For a quick sanity check, enter a location close to Chennai, Goa, Kochi or Mumbai and confirm the closest advisory is near the top. This is a decision-support ranking, not a guarantee of fish presence.
+                </section>
+              </>
+            )}
+          </div>
+        </aside>
+      )}
+    </>
+  );
+}
