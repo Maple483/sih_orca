@@ -2,7 +2,8 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import math, re
 import numpy as np
 import pandas as pd
@@ -17,6 +18,9 @@ PFZ_FILE=BASE/"pfz_advisories.csv"
 YEARS=list(range(2007,2013))
 OPEN_METEO_MARINE="https://marine-api.open-meteo.com/v1/marine"
 NOAA_MUR_ERDDAP="https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41.json"
+NOAA_CHL_GAPFILLED_ERDDAP="https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisVHNnoaaSNPPnoaa20chlaGapfilledDaily.json"
+NOAA_CHL_NRT_ERDDAP="https://coastwatch.pfeg.noaa.gov/erddap/griddap/nesdisVHNnoaa20chlaDaily_Lon0360.json"
+
 
 def _state_columns(df):
     result={}; aliases={"Pondi- cherry":"Puducherry","A.P.":"Andhra Pradesh","T.N.":"Tamil Nadu","W.B.":"West Bengal","A & N Islands":"Andaman & Nicobar","Orissa":"Odisha"}
@@ -85,7 +89,8 @@ def compare(region_a:str=Query(...),region_b:str=Query(...),species:Optional[str
     a,b=build_analysis(region_a,species),build_analysis(region_b,species); avg=lambda rows,key:float(np.mean([r[key] for r in rows])) if rows else 0
     return {"region_a":{"state":a["state"],"mean_catch":avg(a["annual"],"catch"),"mean_sst":avg(a["annual"],"sst"),"mean_chlorophyll":avg(a["annual"],"chlorophyll"),"correlation":a["correlation"]},"region_b":{"state":b["state"],"mean_catch":avg(b["annual"],"catch"),"mean_sst":avg(b["annual"],"sst"),"mean_chlorophyll":avg(b["annual"],"chlorophyll"),"correlation":b["correlation"]}}
 
-# PFZ finder: repository advisories + live marine conditions; never fails the page with a 404.
+# PFZ finder: existing advisory locations ranked using proximity, advisory freshness,
+# candidate-level live SST/chlorophyll and the repository's 2007–2012 historical SST/chlorophyll climatology.
 def _hav(a,b,c,d):
     R=6371.0088; p1,p2=math.radians(a),math.radians(c); dp=math.radians(c-a); dl=math.radians(d-b); q=math.sin(dp/2)**2+math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2; return 2*R*math.asin(min(1,math.sqrt(q)))
 def _pfz():
@@ -102,6 +107,23 @@ def _sat_sst(lat,lon):
     try:
         q=f"analysed_sst[({date})][({lat})][({lon})]"; r=requests.get(NOAA_MUR_ERDDAP,params={"query":q},timeout=8); r.raise_for_status(); rows=r.json().get("table",{}).get("rows",[]); v=rows[0][-1] if rows else None; return float(v) if v is not None and float(v)>-100 else None
     except Exception:return None
+
+def _sat_chlorophyll(lat,lon):
+    end=datetime.now(timezone.utc); start=end-timedelta(days=14)
+    start_s=start.strftime("%Y-%m-%dT00:00:00Z"); end_s=end.strftime("%Y-%m-%dT23:59:59Z")
+    for endpoint in (NOAA_CHL_GAPFILLED_ERDDAP,NOAA_CHL_NRT_ERDDAP):
+        try:
+            q=f"chlor_a[({start_s}):1:({end_s})][({lat})][({lon})]"; r=requests.get(endpoint,params={"query":q},timeout=10); r.raise_for_status(); rows=r.json().get("table",{}).get("rows",[])
+            vals=[]
+            for row in rows:
+                try:
+                    v=float(row[-1])
+                    if math.isfinite(v) and v>0: vals.append(v)
+                except Exception: pass
+            if vals:return float(vals[-1])
+        except Exception: pass
+    return None
+
 def _fresh(text,now):
     m=re.search(r"FROM\s+(\d{1,2}\s+\w+\s+\d{4})\s+TO\s+(\d{1,2}\s+\w+\s+\d{4})",str(text),re.I)
     if not m:return .5
@@ -109,18 +131,118 @@ def _fresh(text,now):
     except ValueError:return .5
     if s<=now<=e:return 1.0
     return max(0.0,1.0-(now-e).total_seconds()/(14*86400)) if now>e else .8
+
+def _state_key(state):
+    s=_clean(state).lower()
+    aliases={
+        "north andhra pradesh":"andhra pradesh",
+        "south andhra pradesh":"andhra pradesh",
+        "north tamil nadu":"tamil nadu",
+        "south tamil nadu":"tamil nadu",
+        "pondicherry":"puducherry",
+        "pondy":"puducherry",
+        "a & n islands":"andaman & nicobar",
+    }
+    return aliases.get(s,s)
+
+def _sst_suitability(sst):
+    if sst is None:return None
+    try:
+        v=float(sst)
+        if not math.isfinite(v):return None
+        # Generic PFZ suitability centered near 27°C; broad 21–33°C envelope.
+        return round(max(0.0,min(100.0,100.0-abs(v-27.0)/6.0*100.0)),1)
+    except Exception:return None
+
+def _scale_score(value,low,high):
+    if value is None:return None
+    try:
+        v=float(value); lo=float(low); hi=float(high)
+        if not (math.isfinite(v) and math.isfinite(lo) and math.isfinite(hi)) or hi<=lo:return None
+        return round(max(0.0,min(100.0,(v-lo)/(hi-lo)*100.0)),1)
+    except Exception:return None
+
+def _historical_profiles(env):
+    h=env[["State","SST_C","Chlorophyll_mg_m3"]].copy()
+    h["SST_C"]=pd.to_numeric(h["SST_C"],errors="coerce"); h["Chlorophyll_mg_m3"]=pd.to_numeric(h["Chlorophyll_mg_m3"],errors="coerce"); h=h.dropna(subset=["State","SST_C","Chlorophyll_mg_m3"])
+    if h.empty:return {},None,None
+    chl_low=float(h["Chlorophyll_mg_m3"].quantile(.10)); chl_high=float(h["Chlorophyll_mg_m3"].quantile(.90))
+    profiles={}
+    for state,g in h.groupby("State"):
+        profiles[_state_key(state)]={
+            "sst_mean_c":float(g["SST_C"].mean()),
+            "chlorophyll_mean_mg_m3":float(g["Chlorophyll_mg_m3"].mean()),
+            "sst_score":float(np.mean([_sst_suitability(v) for v in g["SST_C"].tolist() if _sst_suitability(v) is not None])),
+            "chlorophyll_score":_scale_score(float(g["Chlorophyll_mg_m3"].mean()),chl_low,chl_high),
+        }
+    return profiles,chl_low,chl_high
+
+def _candidate_live(point):
+    lat=float(point["Latitude_Decimal"]); lon=float(point["Longitude_Decimal"])
+    sst=_sat_sst(lat,lon); chl=_sat_chlorophyll(lat,lon); sst_source="NASA/JPL MUR satellite SST via NOAA ERDDAP" if sst is not None else ""
+    if sst is None:
+        fallback=_marine(lat,lon); sst=fallback.get("sst_c"); sst_source=fallback.get("source","") if sst is not None else ""
+    return {"sst_c":sst,"chlorophyll_mg_m3":chl,"sst_source":sst_source,"chlorophyll_source":"NOAA VIIRS chlorophyll via CoastWatch ERDDAP" if chl is not None else ""}
+
 @router.get("/pfz")
 def find_pfz(lat:float=Query(...,ge=-90,le=90),lon:float=Query(...,ge=-180,le=180),max_results:int=Query(5,ge=1,le=10)):
     d=_pfz(); now=datetime.now(timezone.utc); marine=_marine(lat,lon); sat=_sat_sst(lat,lon)
     if sat is not None:marine["satellite_sst_c"]=sat; marine["satellite_sst_source"]="NASA/JPL MUR satellite SST via NOAA ERDDAP"
     if d.empty:return {"status":"NO_ADVISORIES","user_location":{"lat":lat,"lon":lon},"live_conditions":marine,"results":[],"message":"No PFZ advisory records are available."}
+
+    _,env,_=_load(); profiles,chl_low,chl_high=_historical_profiles(env)
+
+    live_by_index={}
+    with ThreadPoolExecutor(max_workers=min(8,len(d))) as executor:
+        futures={executor.submit(_candidate_live,row):idx for idx,(_,row) in enumerate(d.iterrows())}
+        for future in as_completed(futures):
+            idx=futures[future]
+            try:live_by_index[idx]=future.result()
+            except Exception:live_by_index[idx]={"sst_c":None,"chlorophyll_mg_m3":None,"sst_source":"","chlorophyll_source":""}
+
     out=[]
-    for _,r in d.iterrows():
-        dist=_hav(lat,lon,float(r["Latitude_Decimal"]),float(r["Longitude_Decimal"])); fresh=_fresh(r.get("Forecast_Validity",""),now); score=55*max(0,1-min(dist,300)/300)+45*fresh; reasons=[]; wave=marine.get("wave_height_m"); sst=marine.get("satellite_sst_c") or marine.get("sst_c")
-        if wave is not None:
-            if wave<=1.5:score+=8;reasons.append("calmer waves")
-            elif wave>=3:score-=10;reasons.append("high waves")
-        if sst is not None and 22<=sst<=30:score+=4;reasons.append("favourable SST range")
-        out.append({"distance_km":round(dist,1),"rank_score":round(max(0,min(100,score)),1),"from_coast":r.get("From the coast of",r.get("﻿From the coast of","")),"direction":r.get("Direction",""),"bearing_deg":r.get("Bearing (deg)"),"distance_advisory_km":r.get("Distance (km) From-To",""),"depth_m":r.get("Depth (mtr) From-To",""),"lat":float(r["Latitude_Decimal"]),"lon":float(r["Longitude_Decimal"]),"state":r.get("State",""),"forecast_validity":r.get("Forecast_Validity",""),"reasons":reasons})
+    for idx,(_,r) in enumerate(d.iterrows()):
+        dist=_hav(lat,lon,float(r["Latitude_Decimal"]),float(r["Longitude_Decimal"])); fresh=_fresh(r.get("Forecast_Validity",""),now)
+        live=live_by_index.get(idx,{"sst_c":None,"chlorophyll_mg_m3":None}); live_sst=live.get("sst_c"); live_chl=live.get("chlorophyll_mg_m3")
+        hist=profiles.get(_state_key(r.get("State","")))
+        components=[]; component_details={}
+
+        distance_score=max(0.0,min(100.0,100.0*math.exp(-dist/250.0))); components.append((.20,distance_score)); component_details["proximity"] = round(distance_score,1)
+        freshness_score=max(0.0,min(100.0,fresh*100.0)); components.append((.10,freshness_score)); component_details["advisory_freshness"] = round(freshness_score,1)
+
+        live_sst_score=_sst_suitability(live_sst)
+        if live_sst_score is not None:components.append((.20,live_sst_score)); component_details["live_sst"] = live_sst_score
+        live_chl_score=_scale_score(live_chl,chl_low,chl_high)
+        if live_chl_score is not None:components.append((.20,live_chl_score)); component_details["live_chlorophyll"] = live_chl_score
+
+        if hist:
+            if hist.get("sst_score") is not None:components.append((.15,float(hist["sst_score"])*1.0)); component_details["historical_sst"] = round(float(hist["sst_score"]),1)
+            if hist.get("chlorophyll_score") is not None:components.append((.15,float(hist["chlorophyll_score"])*1.0)); component_details["historical_chlorophyll"] = round(float(hist["chlorophyll_score"]),1)
+
+        weight_total=sum(w for w,_ in components) or 1.0
+        score=sum(w*s for w,s in components)/weight_total
+        reasons=[]
+        if live_sst is not None:reasons.append(f"live SST {live_sst:.2f}°C (suitability {live_sst_score:.0f}/100)")
+        if live_chl is not None:reasons.append(f"live chlorophyll {live_chl:.3f} mg/m³ (productivity {live_chl_score:.0f}/100)")
+        if hist:
+            reasons.append(f"historical {hist['sst_mean_c']:.2f}°C SST mean (2007–2012)")
+            reasons.append(f"historical {hist['chlorophyll_mean_mg_m3']:.3f} mg/m³ chlorophyll mean (2007–2012)")
+        reasons.append(f"{dist:.1f} km from your location")
+
+        out.append({
+            "distance_km":round(dist,1),"rank_score":round(max(0,min(100,score)),1),
+            "from_coast":r.get("From the coast of",r.get("﻿From the coast of","")),"direction":r.get("Direction",""),"bearing_deg":r.get("Bearing (deg)"),
+            "distance_advisory_km":r.get("Distance (km) From-To",""),"depth_m":r.get("Depth (mtr) From-To",""),"lat":float(r["Latitude_Decimal"]),"lon":float(r["Longitude_Decimal"]),
+            "state":r.get("State",""),"forecast_validity":r.get("Forecast_Validity",""),"reasons":reasons,
+            "live_sst_c":live_sst,"live_chlorophyll_mg_m3":live_chl,
+            "historical_sst_mean_c":round(hist["sst_mean_c"],3) if hist else None,
+            "historical_chlorophyll_mean_mg_m3":round(hist["chlorophyll_mean_mg_m3"],4) if hist else None,
+            "score_components":component_details,
+        })
+
     out.sort(key=lambda x:(-x["rank_score"],x["distance_km"])); [item.update(rank=i) for i,item in enumerate(out[:max_results],1)]
-    return {"status":"OK","user_location":{"lat":lat,"lon":lon},"generated_at":now.isoformat(),"live_conditions":marine,"results":out[:max_results],"method":"PFZ proximity + advisory freshness + live SST/wave/current conditions. Decision support only; not a guarantee of fish presence.","sources":{"pfz_advisories":"orca-backend/data/pfz_advisories.csv","satellite_sst":"NASA/JPL MUR via NOAA ERDDAP","marine_conditions":"Open-Meteo Marine"}}
+    return {
+        "status":"OK","user_location":{"lat":lat,"lon":lon},"generated_at":now.isoformat(),"live_conditions":marine,"results":out[:max_results],
+        "method":"PFZ ranking uses 20% proximity + 10% advisory freshness + 20% live SST + 20% live chlorophyll + 15% historical SST + 15% historical chlorophyll. Historical SST/chlorophyll are the repository's synthetic 2007–2012 coastal series; live SST uses NASA/JPL MUR via NOAA ERDDAP and live chlorophyll uses NOAA VIIRS via CoastWatch ERDDAP. Decision support only; not a guarantee of fish presence.",
+        "sources":{"pfz_advisories":"orca-backend/data/pfz_advisories.csv","historical_environment":"orca-backend/data/synthetic_indian_coastal_sst_chlorophyll_2007_2012.csv","satellite_sst":"NASA/JPL MUR via NOAA ERDDAP","satellite_chlorophyll":"NOAA VIIRS via CoastWatch ERDDAP","marine_conditions":"Open-Meteo Marine"}
+    }
