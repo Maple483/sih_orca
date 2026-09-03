@@ -1,17 +1,17 @@
 """Primary ORCA backend entry point.
 
 Starts the existing FastAPI gateway and mounts the Marine Productivity API.
-Run with: python run.py
+The PFZ recommendation endpoint is served by the dedicated robust satellite
+service in pfz_recommender.py.
 """
 from fastapi import Query
 from main import app
-from marine_productivity import router as marine_productivity_router, pfz_recommendation
+from marine_productivity import router as marine_productivity_router
+from pfz_recommender import pfz_recommendation
 
-# Mount all Marine Productivity routes, including the live PFZ recommender.
 app.include_router(marine_productivity_router)
 
-# Short compatibility alias. This also makes it easy to test the PFZ service
-# directly in a browser without depending on the frontend route construction.
+# Stable compatibility endpoint used by the frontend and useful for direct testing.
 @app.get("/api/pfz-recommendation", tags=["Marine Productivity"])
 def pfz_recommendation_compat(
     lat: float = Query(..., ge=-90, le=90),
