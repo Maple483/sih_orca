@@ -4,30 +4,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 import re
-import csv
-import io
-import math
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
-import requests
 from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter(prefix="/api/marine-productivity", tags=["Marine Productivity"])
 BASE = Path(__file__).resolve().parent / "data"
 LANDINGS = BASE / "Combined_Marine_Landings.csv"
 ENVIRONMENT = BASE / "synthetic_indian_coastal_sst_chlorophyll_2007_2012.csv"
-PFZ_DATA = BASE / "pfz_advisories.csv"
 YEARS = list(range(2007, 2013))
-
-# Public near-real-time satellite products used only by the PFZ recommender.
-# SST product also exposes SST gradients/front indicators and surface wind.
-NRT_SST_URL = "https://coastwatch.noaa.gov/erddap/griddap/noaacwLEOACSPOSSTL3SnrtCDaily.csv"
-NRT_CHL_URL = "https://coastwatch.noaa.gov/erddap/griddap/noaacwNPPVIIRSchlaDaily.csv"
-_PFZ_CACHE: dict[str, tuple[float, dict]] = {}
-_PFZ_CACHE_TTL = 15 * 60
 
 
 def _state_columns(df: pd.DataFrame) -> dict[str, str]:
@@ -229,207 +215,6 @@ def build_analysis(state: str, species: Optional[str] = None, start_year: int = 
         "anomalies": _records(m.loc[m["catch_anomaly"], ["Year", "catch", "catch_z"]]),
         "explanation": _explain(m, seasonal, species, env_trends),
     }
-
-
-# ---------------------------------------------------------------------------
-# Live satellite PFZ recommendation
-# ---------------------------------------------------------------------------
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp = math.radians(lat2 - lat1)
-    dl = math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
-def _read_erddap_value(text: str) -> dict:
-    rows = list(csv.DictReader(io.StringIO(text)))
-    if not rows:
-        raise ValueError("No satellite value returned")
-    row = rows[0]
-    return row
-
-
-def _fetch_satellite_point(lat: float, lon: float) -> dict:
-    """Fetch latest available satellite SST/front/wind and chlorophyll at one point."""
-    # ERDDAP snaps the requested coordinate to the nearest available grid cell.
-    sst_query = (
-        f"?sea_surface_temperature[(last)][({lat:.4f})][({lon:.4f})],"
-        f"sst_gradient_magnitude[(last)][({lat:.4f})][({lon:.4f})],"
-        f"sst_front_position[(last)][({lat:.4f})][({lon:.4f})],"
-        f"wind_speed[(last)][({lat:.4f})][({lon:.4f})]"
-    )
-    chl_query = (
-        f"?chlor_a[(last)][(0)][({lat:.4f})][({lon:.4f})]"
-    )
-    sst_resp = requests.get(NRT_SST_URL + sst_query, timeout=12)
-    sst_resp.raise_for_status()
-    sst = _read_erddap_value(sst_resp.text)
-    chl_resp = requests.get(NRT_CHL_URL + chl_query, timeout=12)
-    chl_resp.raise_for_status()
-    chl = _read_erddap_value(chl_resp.text)
-
-    def num(row: dict, key: str) -> Optional[float]:
-        try:
-            value = float(row.get(key, ""))
-            if not math.isfinite(value) or value < -900:
-                return None
-            return value
-        except Exception:
-            return None
-
-    return {
-        "sst_c": num(sst, "sea_surface_temperature"),
-        "sst_gradient": num(sst, "sst_gradient_magnitude"),
-        "sst_front": bool(round(num(sst, "sst_front_position") or 0)),
-        "wind_speed_ms": num(sst, "wind_speed"),
-        "chlorophyll_mg_m3": num(chl, "chlor_a"),
-        "satellite_sst_time": sst.get("time"),
-        "satellite_chl_time": chl.get("time"),
-    }
-
-
-def _load_pfz_candidates() -> list[dict]:
-    if not PFZ_DATA.exists():
-        return []
-    with open(PFZ_DATA, encoding="utf-8-sig", newline="") as f:
-        rows = list(csv.DictReader(f))
-    candidates = []
-    for row in rows:
-        try:
-            candidates.append({
-                "coast_name": row["From the coast of"],
-                "direction": row["Direction"],
-                "bearing_deg": float(row["Bearing (deg)"]),
-                "distance_km_range": row["Distance (km) From-To"],
-                "depth_mtr_range": row["Depth (mtr) From-To"],
-                "state": row["State"],
-                "validity": row["Forecast_Validity"],
-                "lat": float(row["Latitude_Decimal"]),
-                "lon": float(row["Longitude_Decimal"]),
-            })
-        except (KeyError, ValueError):
-            continue
-    return candidates
-
-
-def _percentile_scores(values: list[Optional[float]], higher_is_better: bool = True) -> list[float]:
-    valid = [v for v in values if v is not None]
-    if not valid:
-        return [0.5] * len(values)
-    lo, hi = min(valid), max(valid)
-    if abs(hi - lo) < 1e-9:
-        return [0.5 if v is not None else 0.0 for v in values]
-    out = []
-    for v in values:
-        if v is None:
-            out.append(0.0)
-        else:
-            s = (v - lo) / (hi - lo)
-            out.append(s if higher_is_better else 1.0 - s)
-    return out
-
-
-def _rank_live_pfz(lat: float, lon: float, limit: int = 5) -> dict:
-    candidates = _load_pfz_candidates()
-    if not candidates:
-        raise HTTPException(503, detail="PFZ advisory candidate data is unavailable")
-
-    # Restrict to a useful coastal search radius when possible, while retaining
-    # all candidates as a fallback for vessels farther offshore.
-    for c in candidates:
-        c["distance_to_vessel_km"] = _haversine_km(lat, lon, c["lat"], c["lon"])
-    nearby = [c for c in candidates if c["distance_to_vessel_km"] <= 500]
-    if len(nearby) < 3:
-        nearby = sorted(candidates, key=lambda x: x["distance_to_vessel_km"])[:12]
-    else:
-        nearby = sorted(nearby, key=lambda x: x["distance_to_vessel_km"])[:18]
-
-    enriched: list[dict] = []
-    with ThreadPoolExecutor(max_workers=min(6, len(nearby))) as pool:
-        jobs = {pool.submit(_fetch_satellite_point, c["lat"], c["lon"]): c for c in nearby}
-        for job in as_completed(jobs):
-            c = jobs[job]
-            try:
-                c = {**c, **job.result(), "satellite_status": "live"}
-            except Exception as exc:
-                # Keep the candidate usable, but do not pretend the satellite
-                # value was observed if the remote service is unavailable.
-                c = {**c, "satellite_status": "unavailable", "satellite_error": str(exc)[:120]}
-            enriched.append(c)
-
-    live = [c for c in enriched if c.get("satellite_status") == "live" and c.get("chlorophyll_mg_m3") is not None and c.get("sst_c") is not None]
-    if not live:
-        raise HTTPException(503, detail="Live satellite services did not return usable SST/chlorophyll values. Try again in a moment.")
-
-    chl_scores = _percentile_scores([c.get("chlorophyll_mg_m3") for c in live])
-    grad_scores = _percentile_scores([c.get("sst_gradient") for c in live])
-    wind_scores = []
-    distance_scores = []
-    for c in live:
-        wind = c.get("wind_speed_ms")
-        # Lower winds are safer/preferable for a fishing recommendation.
-        wind_scores.append(max(0.0, 1.0 - max(0.0, (wind or 0) - 4.0) / 10.0))
-        distance_scores.append(1.0 / (1.0 + c["distance_to_vessel_km"] / 100.0))
-
-    for i, c in enumerate(live):
-        front_bonus = 0.10 if c.get("sst_front") else 0.0
-        # Heuristic advisory score: productivity signals are dominant, while
-        # distance and wind keep the result practical for the fisherman.
-        score = (
-            0.40 * chl_scores[i]
-            + 0.25 * grad_scores[i]
-            + 0.15 * wind_scores[i]
-            + 0.20 * distance_scores[i]
-            + front_bonus
-        )
-        c["pfz_score"] = round(min(1.0, score) * 100, 1)
-        c["rank_reason"] = "High chlorophyll + SST front/gradient" if c.get("sst_front") else "High chlorophyll + SST gradient"
-
-    ranked = sorted(live, key=lambda x: (-x["pfz_score"], x["distance_to_vessel_km"]))
-    for i, c in enumerate(ranked[:limit], 1):
-        c["rank"] = i
-        c["distance_to_vessel_km"] = round(c["distance_to_vessel_km"], 1)
-        c["lat"] = round(c["lat"], 5)
-        c["lon"] = round(c["lon"], 5)
-        if c.get("sst_c") is not None:
-            c["sst_c"] = round(c["sst_c"], 2)
-        if c.get("chlorophyll_mg_m3") is not None:
-            c["chlorophyll_mg_m3"] = round(c["chlorophyll_mg_m3"], 3)
-        if c.get("sst_gradient") is not None:
-            c["sst_gradient"] = round(c["sst_gradient"], 4)
-        if c.get("wind_speed_ms") is not None:
-            c["wind_speed_ms"] = round(c["wind_speed_ms"], 2)
-
-    return {
-        "vessel_location": {"lat": lat, "lon": lon},
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "data_sources": {
-            "sst": "NOAA ACSPO VIIRS/AVHRR near-real-time SST",
-            "chlorophyll": "NOAA S-NPP VIIRS near-real-time chlorophyll-a",
-            "candidate_advisories": "ORCA PFZ advisory nodes",
-        },
-        "method": "Ranks nearby PFZ candidate nodes using live chlorophyll, SST gradient/front, surface wind and vessel distance.",
-        "caution": "This is an ORCA decision-support ranking, not an official INCOIS PFZ forecast. Validate against current official advisories before sailing.",
-        "results": ranked[:limit],
-    }
-
-
-@router.get("/pfz-recommendation")
-def pfz_recommendation(
-    lat: float = Query(..., ge=-90, le=90),
-    lon: float = Query(..., ge=-180, le=180),
-    limit: int = Query(5, ge=1, le=10),
-):
-    cache_key = f"{lat:.4f}:{lon:.4f}:{limit}"
-    now = time.time()
-    cached = _PFZ_CACHE.get(cache_key)
-    if cached and now - cached[0] < _PFZ_CACHE_TTL:
-        return cached[1]
-    result = _rank_live_pfz(lat, lon, limit)
-    _PFZ_CACHE[cache_key] = (now, result)
-    return result
 
 
 @router.get("/regions")
