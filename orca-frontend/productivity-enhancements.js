@@ -36,63 +36,6 @@
 
   async function getJSON(url){const r=await fetch(url);if(!r.ok)throw new Error(`Backend returned ${r.status}`);return r.json();}
 
-  async function renderPFZRecommendation(root){
-    const box=root.querySelector('#pe-pfz-box');
-    if(!box)return;
-    const lat=Number(root.querySelector('#pe-pfz-lat')?.value);
-    const lon=Number(root.querySelector('#pe-pfz-lon')?.value);
-    if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lon)||lon<-180||lon>180){
-      box.innerHTML='<div class="pe-error">Enter a valid latitude (-90 to 90) and longitude (-180 to 180).</div>';
-      return;
-    }
-    box.innerHTML='<div class="pe-empty">Fetching latest satellite conditions and ranking nearby PFZs…</div>';
-    try{
-      const d=await getJSON(`${API}/api/marine-productivity/pfz-recommendation?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&limit=5`);
-      const rows=d.results||[];
-      if(!rows.length){box.innerHTML='<div class="pe-empty">No PFZ candidates were returned for this location.</div>';return;}
-      const sourceTime=[...rows.map(r=>r.satellite_sst_time),...rows.map(r=>r.satellite_chl_time)].filter(Boolean).sort().pop();
-      box.innerHTML=`
-        <div class="pe-pfz-summary">
-          <div><b>Nearest best PFZ for your location</b><span>Lat ${lat.toFixed(4)}, Lon ${lon.toFixed(4)}</span></div>
-          <div class="pe-pfz-meta">Ranked using live satellite chlorophyll-a, SST gradient/front, surface wind and distance. ${sourceTime?`Latest satellite timestamp: ${esc(sourceTime)}.`:''}</div>
-        </div>
-        <div class="pe-pfz-list">
-          ${rows.map((r,i)=>`<div class="pe-pfz-row ${i===0?'best':''}">
-            <div class="pe-pfz-rank">${r.rank||i+1}</div>
-            <div class="pe-pfz-main">
-              <div class="pe-pfz-title">${esc(r.coast_name)} ${i===0?'<span class="pe-best-pill">BEST MATCH</span>':''}</div>
-              <div class="pe-pfz-sub">${esc(r.state)} · ${esc(r.direction)} · ${Number(r.distance_to_vessel_km).toFixed(1)} km from your location</div>
-              <div class="pe-pfz-metrics">
-                <span>Chl-a <b>${r.chlorophyll_mg_m3==null?'—':Number(r.chlorophyll_mg_m3).toFixed(3)} mg/m³</b></span>
-                <span>SST <b>${r.sst_c==null?'—':Number(r.sst_c).toFixed(2)} °C</b></span>
-                <span>Front <b>${r.sst_front?'Yes':'No'}</b></span>
-                <span>Wind <b>${r.wind_speed_ms==null?'—':Number(r.wind_speed_ms).toFixed(1)} m/s</b></span>
-              </div>
-              <div class="pe-pfz-sub">Bearing ${Number(r.bearing_deg).toFixed(0)}° · PFZ depth ${esc(r.depth_mtr_range)} m · advisory ${esc(r.validity)}</div>
-            </div>
-            <div class="pe-pfz-score"><b>${Number(r.pfz_score).toFixed(0)}</b><small>score</small></div>
-          </div>`).join('')}
-        </div>
-        <div class="pe-note">${esc(d.caution||'Decision-support recommendation only. Validate against current official fishing advisories and local weather before sailing.')}</div>`;
-    }catch(e){box.innerHTML=`<div class="pe-error">${esc(e.message||'Unable to generate PFZ recommendation.')} Try again.</div>`;}
-  }
-
-  function bindPFZ(root){
-    const locate=root.querySelector('#pe-pfz-locate');
-    const run=root.querySelector('#pe-pfz-run');
-    if(run)run.onclick=()=>renderPFZRecommendation(root);
-    if(locate)locate.onclick=()=>{
-      if(!navigator.geolocation){root.querySelector('#pe-pfz-box').innerHTML='<div class="pe-error">Location services are not available in this browser. Enter coordinates manually.</div>';return;}
-      locate.textContent='Locating…';
-      navigator.geolocation.getCurrentPosition(pos=>{
-        root.querySelector('#pe-pfz-lat').value=pos.coords.latitude.toFixed(4);
-        root.querySelector('#pe-pfz-lon').value=pos.coords.longitude.toFixed(4);
-        locate.textContent='Use my location';
-        renderPFZRecommendation(root);
-      },()=>{locate.textContent='Use my location';root.querySelector('#pe-pfz-box').innerHTML='<div class="pe-error">Could not read your location. Enter latitude and longitude manually.</div>';},{enableHighAccuracy:true,timeout:10000,maximumAge:60000});
-    };
-  }
-
   async function openEnhanced(){
     if(document.getElementById('orca-productivity-enhanced'))return;
     const root=document.createElement('div');root.id='orca-productivity-enhanced';
@@ -127,9 +70,7 @@
         ${card('Monthly SST — every month, 2007–2012',lineChart(e.monthly,'SST_C','SST','°C',true))}
         ${card('Monthly chlorophyll-a — every month, 2007–2012',lineChart(e.monthly,'Chlorophyll_mg_m3','Chlorophyll-a','mg/m³',true))}
         <div class="pe-two">${card('Catch ↔ SST',`<div class="pe-big">${corrS==null?'—':corrS.toFixed(2)}</div><div>${esc(effectText('SST',a.explanation.sst_trend,sstEffect))}</div>`)}${card('Catch ↔ Chlorophyll-a',`<div class="pe-big">${corrC==null?'—':corrC.toFixed(2)}</div><div>${esc(effectText('chlorophyll-a',a.explanation.chlorophyll_trend,chlEffect))}</div>`)}</div>
-        ${card('Live PFZ recommendation — nearest productive fishing ground',`<div class="pe-pfz-controls"><label>Fisherman latitude<input id="pe-pfz-lat" type="number" step="0.0001" min="-90" max="90" placeholder="e.g. 13.0000"></label><label>Fisherman longitude<input id="pe-pfz-lon" type="number" step="0.0001" min="-180" max="180" placeholder="e.g. 80.0000"></label><button id="pe-pfz-locate">Use my location</button><button id="pe-pfz-run">Find best PFZ</button></div><div id="pe-pfz-box" class="pe-pfz-box"><div class="pe-empty">Enter your current coordinates, then find the nearest best PFZ.</div></div>`)}
       `;
-      bindPFZ(content);
     }
     regionSel.onchange=async()=>{await loadSpecies();await load();};speciesSel.onchange=load;root.querySelector('#pe-run').onclick=load;await loadRegions();
   }
