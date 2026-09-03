@@ -9,18 +9,19 @@
   };
 
   const stateAliases = {
-    'north andhra pradesh': 'andhra pradesh',
-    'south andhra pradesh': 'andhra pradesh',
-    'north tamil nadu': 'tamil nadu',
-    'south tamil nadu': 'tamil nadu',
-    'pondicherry': 'puducherry',
-    'pondy': 'puducherry',
-    'a & n islands': 'andaman & nicobar'
+    'north andhra pradesh': 'Andhra Pradesh',
+    'south andhra pradesh': 'Andhra Pradesh',
+    'north tamil nadu': 'Tamil Nadu',
+    'south tamil nadu': 'Tamil Nadu',
+    'pondicherry': 'Puducherry',
+    'pondy': 'Puducherry',
+    'a & n islands': 'Andaman & Nicobar'
   };
 
   const normalizeState = state => {
-    const s = String(state || '').trim().toLowerCase();
-    return stateAliases[s] || s;
+    const raw = String(state || '').trim();
+    const key = raw.toLowerCase();
+    return stateAliases[key] || raw;
   };
 
   const finite = v => Number.isFinite(Number(v)) ? Number(v) : null;
@@ -56,7 +57,7 @@
     if (x.length === 1) return 0.5;
     let lo=0, hi=x.length;
     while (lo<hi) { const mid=Math.floor((lo+hi)/2); if (x[mid] < v) lo=mid+1; else hi=mid; }
-    return Math.max(0,Math.min(1,lo/(x.length)));
+    return Math.max(0,Math.min(1,lo/x.length));
   }
 
   function directionText(r, variable) {
@@ -98,8 +99,6 @@
 
     const catchEnvScore = weight ? 100*(weighted/weight) : 50;
     const base = finite(result.rank_score) ?? 50;
-    // The existing PFZ score already includes proximity/freshness/live+historical environment.
-    // Add a catch-environment evidence layer without replacing that existing logic.
     const finalScore = 0.55*base + 0.45*catchEnvScore;
     return {
       score: Number(finalScore.toFixed(1)),
@@ -117,16 +116,16 @@
     const chlR = correlation(catchVals, chlHist);
     const parts=[];
 
-    parts.push(`We recommend PFZ #${result.rank || 1} near ${result.from_coast || 'this advisory zone'} because it scored best among the available fishing advisories.`);
+    parts.push(`We recommend this fishing zone because it gives the best overall match with the available PFZ advisories and ocean conditions.`);
     if (result.distance_km != null) parts.push(`It is about ${Number(result.distance_km).toFixed(1)} km from your location.`);
 
     if (sstR !== null && Math.abs(sstR) >= 0.25) {
       const live=finite(result.live_sst_c);
       const histText=directionText(sstR,'SST');
       const match=matchText(sstR,'Current SST',live,sstHist);
-      parts.push(`In the past catch records for this coastal region, ${histText}.` + (match ? ` ${match}.` : ''));
+      parts.push(`Looking at past catches in this coastal region, ${histText}.` + (match ? ` ${match}.` : ''));
     } else {
-      parts.push('Past catch records do not show a strong or consistent SST link in this coastal region.');
+      parts.push('Past catches in this coastal region do not show a strong or consistent SST link.');
     }
 
     if (chlR !== null && Math.abs(chlR) >= 0.25) {
@@ -135,21 +134,21 @@
       const match=matchText(chlR,'Current chlorophyll',live,chlHist);
       parts.push(`For chlorophyll, ${histText}.` + (match ? ` ${match}.` : ''));
     } else {
-      parts.push('Past catch records do not show a strong or consistent chlorophyll link in this coastal region.');
+      parts.push('Past catches in this coastal region do not show a strong or consistent chlorophyll link.');
     }
 
     const liveSst=finite(result.live_sst_c);
     const liveChl=finite(result.live_chlorophyll_mg_m3);
     if (liveSst !== null || liveChl !== null) {
       const liveBits=[];
-      if (liveSst !== null) liveBits.push(`current SST is ${liveSst.toFixed(2)}°C`);
-      if (liveChl !== null) liveBits.push(`current chlorophyll is ${liveChl.toFixed(3)} mg/m³`);
-      parts.push(`Right now at this PFZ, ${liveBits.join(' and ')}. These live values are included when ranking the spot.`);
+      if (liveSst !== null) liveBits.push(`the current SST is ${liveSst.toFixed(2)}°C`);
+      if (liveChl !== null) liveBits.push(`the current chlorophyll level is ${liveChl.toFixed(3)} mg/m³`);
+      parts.push(`At this fishing zone now, ${liveBits.join(' and ')}. These current conditions are used when choosing between the recommended zones.`);
     } else {
-      parts.push('Live SST/chlorophyll data were not available for this PFZ at this moment, so the ranking relies more on the available historical data, advisory freshness and distance.');
+      parts.push('Live SST and chlorophyll were not available for this zone right now, so the recommendation gives more weight to the available past data, advisory freshness and distance.');
     }
 
-    parts.push('This is a decision-support advisory based on historical catch relationships and current ocean conditions; it does not guarantee fish presence or catch.');
+    parts.push('This is a guidance tool, not a guarantee of fish catch.');
     return parts.join(' ');
   }
 
@@ -179,7 +178,7 @@
       panel.className='mp-card';
       anchor.insertAdjacentElement('afterend',panel);
     }
-    panel.innerHTML=`<div class="pci-head"><h3>Why this PFZ is recommended</h3><span class="pci-tag">CATCH + OCEAN CONDITIONS</span></div><p class="pci-text">${escapeHTML(text)}</p><div class="pci-method"><b>How it decides:</b> your distance to the PFZ + advisory freshness + live SST + live chlorophyll + historical SST/chlorophyll, with an extra check of how SST and chlorophyll have matched past fish catches in that coastal region.</div>`;
+    panel.innerHTML=`<div class="pci-head"><h3>Why this fishing zone is recommended</h3><span class="pci-tag">CATCH + OCEAN CONDITIONS</span></div><p class="pci-text">${escapeHTML(text)}</p><div class="pci-method"><b>In simple terms:</b> we look at where you are, how fresh the PFZ advisory is, what the ocean is like there now, and what SST and chlorophyll looked like during years when catches were higher in that coastal region.</div>`;
   }
 
   function escapeHTML(text) {
