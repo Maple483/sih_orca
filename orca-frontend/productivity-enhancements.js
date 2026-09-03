@@ -103,7 +103,7 @@
           <div class="mp-note">Historical SST/chlorophyll values for 2007–2012 are synthetic and are retained for historical visualization only.</div>
         </div>
         <section class="mp-card"><h3>${esc(a.species_filter||'Total')} Annual Fish Catch (landings) — exact value on hover</h3>${lineChart(a.annual,'catch','Fish catch','tonnes',false,'#10b981')}</section>
-        <section class="mp-card"><h3>${catchTitle}</h3>${barChart(a.top_species,'catch_tonnes','Species','#facc15')}</section>
+        <section class="mp-card"><h3>${catchTitle}</h3>${barChart(a.top_species,'catch_tonnes','Species','#e3b200')}</section>
         <section class="mp-card"><h3>Monthly SST — every month, 2007–2012</h3>${lineChart(e.monthly,'SST_C','SST','°C',true,'#3b82f6')}</section>
         <section class="mp-card"><h3>Monthly chlorophyll-a — every month, 2007–2012</h3>${lineChart(e.monthly,'Chlorophyll_mg_m3','Chlorophyll-a','mg/m³',true,'#3b82f6')}</section>
         <div class="mp-grid2"><section class="mp-card"><h3>Catch ↔ SST</h3><div class="mp-big">${corrS==null?'—':corrS.toFixed(2)}</div><div style="font-size:11px;color:#94a3b8;margin-top:4px">${esc(effectText('SST',a.explanation.sst_trend,sstEffect))}</div></section><section class="mp-card"><h3>Catch ↔ Chlorophyll-a</h3><div class="mp-big">${corrC==null?'—':corrC.toFixed(2)}</div><div style="font-size:11px;color:#94a3b8;margin-top:4px">${esc(effectText('chlorophyll-a',a.explanation.chlorophyll_trend,chlEffect))}</div></section></div>
